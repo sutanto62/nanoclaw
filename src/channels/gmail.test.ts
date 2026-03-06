@@ -60,14 +60,6 @@ describe('GmailChannel', () => {
       expect(ch.name).toBe('gmail');
     });
 
-    it('defaults to unread query when no filter configured', () => {
-      const ch = new GmailChannel(makeOpts());
-      const query = (
-        ch as unknown as { buildQuery: () => string }
-      ).buildQuery();
-      expect(query).toBe('is:unread category:primary');
-    });
-
     it('defaults with no options provided', () => {
       const ch = new GmailChannel(makeOpts());
       expect(ch.name).toBe('gmail');

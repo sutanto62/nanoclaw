@@ -5,7 +5,6 @@ import path from 'path';
 import { google, gmail_v1 } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
 
-// isMain flag is used instead of MAIN_GROUP_FOLDER constant
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
@@ -28,6 +27,47 @@ interface ThreadMeta {
   messageId: string; // RFC 2822 Message-ID for In-Reply-To
 }
 
+const URGENT_KEYWORDS = [
+  'urgent',
+  'asap',
+  'critical',
+  'deadline',
+  'blocker',
+  'blocked',
+  'action required',
+  'immediate',
+  'emergency',
+  'escalation',
+];
+
+function isUrgentSubject(subject: string): boolean {
+  const lower = subject.toLowerCase();
+  return URGENT_KEYWORDS.some((k) => lower.includes(k));
+}
+
+function loadVipNames(mainFolder: string): string[] {
+  const vipPath = path.join(process.cwd(), 'groups', mainFolder, 'vips.md');
+  if (!fs.existsSync(vipPath)) return [];
+  try {
+    return fs
+      .readFileSync(vipPath, 'utf-8')
+      .split('\n')
+      .filter((l) => l.startsWith('- '))
+      .map((l) => {
+        const match = l.replace(/^- /, '').match(/^(.+?)(\s*[—\-]|$)/);
+        return match ? match[1].trim() : '';
+      })
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function isVipSender(senderName: string, vipNames: string[]): boolean {
+  const lower = senderName.toLowerCase();
+  return vipNames.some((v) => lower.includes(v.toLowerCase()));
+}
+
 export class GmailChannel implements Channel {
   name = 'gmail';
 
@@ -36,14 +76,19 @@ export class GmailChannel implements Channel {
   private opts: GmailChannelOpts;
   private pollIntervalMs: number;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
-  private processedIds = new Set<string>();
   private threadMeta = new Map<string, ThreadMeta>();
+  private threadMetaPath: string;
   private consecutiveErrors = 0;
   private userEmail = '';
 
   constructor(opts: GmailChannelOpts, pollIntervalMs = 3600000) {
     this.opts = opts;
     this.pollIntervalMs = pollIntervalMs;
+    this.threadMetaPath = path.join(
+      os.homedir(),
+      '.gmail-mcp',
+      'thread-meta.json',
+    );
   }
 
   async connect(): Promise<void> {
@@ -58,6 +103,8 @@ export class GmailChannel implements Channel {
       return;
     }
 
+    this.loadThreadMeta();
+
     const keys = JSON.parse(fs.readFileSync(keysPath, 'utf-8'));
     const tokens = JSON.parse(fs.readFileSync(tokensPath, 'utf-8'));
 
@@ -70,7 +117,6 @@ export class GmailChannel implements Channel {
     );
     this.oauth2Client.setCredentials(tokens);
 
-    // Persist refreshed tokens
     this.oauth2Client.on('tokens', (newTokens) => {
       try {
         const current = JSON.parse(fs.readFileSync(tokensPath, 'utf-8'));
@@ -84,12 +130,10 @@ export class GmailChannel implements Channel {
 
     this.gmail = google.gmail({ version: 'v1', auth: this.oauth2Client });
 
-    // Verify connection
     const profile = await this.gmail.users.getProfile({ userId: 'me' });
     this.userEmail = profile.data.emailAddress || '';
     logger.info({ email: this.userEmail }, 'Gmail channel connected');
 
-    // Start polling with error backoff
     const schedulePoll = () => {
       const backoffMs =
         this.consecutiveErrors > 0
@@ -107,7 +151,6 @@ export class GmailChannel implements Channel {
       }, backoffMs);
     };
 
-    // Initial poll
     await this.pollForMessages();
     schedulePoll();
   }
@@ -150,10 +193,7 @@ export class GmailChannel implements Channel {
     try {
       await this.gmail.users.messages.send({
         userId: 'me',
-        requestBody: {
-          raw: encodedMessage,
-          threadId,
-        },
+        requestBody: { raw: encodedMessage, threadId },
       });
       logger.info({ to: meta.sender, threadId }, 'Gmail reply sent');
     } catch (err) {
@@ -181,61 +221,99 @@ export class GmailChannel implements Channel {
 
   // --- Private ---
 
-  private buildQuery(): string {
-    return 'is:unread category:primary';
+  private loadThreadMeta(): void {
+    if (!fs.existsSync(this.threadMetaPath)) return;
+    try {
+      const data = JSON.parse(fs.readFileSync(this.threadMetaPath, 'utf-8'));
+      for (const [threadId, meta] of Object.entries(data)) {
+        this.threadMeta.set(threadId, meta as ThreadMeta);
+      }
+      logger.debug(
+        { count: this.threadMeta.size },
+        'Thread metadata loaded from disk',
+      );
+    } catch (err) {
+      logger.warn({ err }, 'Failed to load thread metadata from disk');
+    }
+  }
+
+  private saveThreadMeta(): void {
+    try {
+      const data = Object.fromEntries(this.threadMeta.entries());
+      fs.writeFileSync(this.threadMetaPath, JSON.stringify(data, null, 2));
+    } catch (err) {
+      logger.warn({ err }, 'Failed to save thread metadata to disk');
+    }
+  }
+
+  private getMainGroup(): { jid: string; group: RegisteredGroup } | null {
+    const groups = this.opts.registeredGroups();
+    const entry = Object.entries(groups).find(([, g]) => g.isMain === true);
+    return entry ? { jid: entry[0], group: entry[1] } : null;
   }
 
   private async pollForMessages(): Promise<void> {
     if (!this.gmail) return;
 
+    const main = this.getMainGroup();
+    const vipNames = main ? loadVipNames(main.group.folder) : [];
+
     try {
-      const query = this.buildQuery();
       const res = await this.gmail.users.messages.list({
         userId: 'me',
-        q: query,
-        maxResults: 10,
+        q: 'is:unread category:primary',
+        maxResults: 20,
       });
 
       const messages = res.data.messages || [];
+      let metaChanged = false;
 
       for (const stub of messages) {
-        if (!stub.id || this.processedIds.has(stub.id)) continue;
-        this.processedIds.add(stub.id);
-
-        await this.processMessage(stub.id);
+        if (!stub.id) continue;
+        try {
+          const changed = await this.processEmailMetadata(
+            stub.id,
+            vipNames,
+            main,
+          );
+          if (changed) metaChanged = true;
+        } catch (err) {
+          logger.warn(
+            { messageId: stub.id, err },
+            'Failed to process email, skipping',
+          );
+        }
       }
 
-      // Cap processed ID set to prevent unbounded growth
-      if (this.processedIds.size > 5000) {
-        const ids = [...this.processedIds];
-        this.processedIds = new Set(ids.slice(ids.length - 2500));
-      }
-
+      if (metaChanged) this.saveThreadMeta();
       this.consecutiveErrors = 0;
     } catch (err) {
       this.consecutiveErrors++;
-      const backoffMs = Math.min(
-        this.pollIntervalMs * Math.pow(2, this.consecutiveErrors),
-        30 * 60 * 1000,
-      );
       logger.error(
-        {
-          err,
-          consecutiveErrors: this.consecutiveErrors,
-          nextPollMs: backoffMs,
-        },
+        { err, consecutiveErrors: this.consecutiveErrors },
         'Gmail poll failed',
       );
     }
   }
 
-  private async processMessage(messageId: string): Promise<void> {
-    if (!this.gmail) return;
+  /**
+   * Fetch metadata only first (fast). Cache threadMeta for all emails.
+   * Fetch full body and deliver to Brain only for VIP or urgent emails.
+   * Mark all others as read silently — MCP handles them during briefing.
+   * Returns true if threadMeta was updated.
+   */
+  private async processEmailMetadata(
+    messageId: string,
+    vipNames: string[],
+    main: { jid: string; group: RegisteredGroup } | null,
+  ): Promise<boolean> {
+    if (!this.gmail) return false;
 
     const msg = await this.gmail.users.messages.get({
       userId: 'me',
       id: messageId,
-      format: 'full',
+      format: 'metadata',
+      metadataHeaders: ['From', 'Subject', 'Message-ID'],
     });
 
     const headers = msg.data.payload?.headers || [];
@@ -251,25 +329,13 @@ export class GmailChannel implements Channel {
       parseInt(msg.data.internalDate || '0', 10),
     ).toISOString();
 
-    // Extract sender name and email
     const senderMatch = from.match(/^(.+?)\s*<(.+?)>$/);
     const senderName = senderMatch ? senderMatch[1].replace(/"/g, '') : from;
     const senderEmail = senderMatch ? senderMatch[2] : from;
 
-    // Skip emails from self (our own replies)
-    if (senderEmail === this.userEmail) return;
+    if (senderEmail === this.userEmail) return false;
 
-    // Extract body text
-    const body = this.extractTextBody(msg.data.payload);
-
-    if (!body) {
-      logger.debug({ messageId, subject }, 'Skipping email with no text body');
-      return;
-    }
-
-    const chatJid = `gmail:${threadId}`;
-
-    // Cache thread metadata for replies
+    // Always cache threadMeta — needed for replies regardless of urgency
     this.threadMeta.set(threadId, {
       sender: senderEmail,
       senderName,
@@ -277,22 +343,66 @@ export class GmailChannel implements Channel {
       messageId: rfc2822MessageId,
     });
 
-    // Store chat metadata for group discovery
-    this.opts.onChatMetadata(chatJid, timestamp, subject, 'gmail', false);
+    this.opts.onChatMetadata(
+      `gmail:${threadId}`,
+      timestamp,
+      subject,
+      'gmail',
+      false,
+    );
 
-    // Find the main group to deliver the email notification
-    const groups = this.opts.registeredGroups();
-    const mainEntry = Object.entries(groups).find(([, g]) => g.isMain === true);
+    const urgent =
+      isVipSender(senderName, vipNames) || isUrgentSubject(subject);
 
-    if (!mainEntry) {
-      logger.debug(
-        { chatJid, subject },
-        'No main group registered, skipping email',
+    if (urgent && main) {
+      await this.deliverEmailToBrain(
+        messageId,
+        threadId,
+        senderName,
+        senderEmail,
+        subject,
+        timestamp,
+        main.jid,
       );
+    } else {
+      // Mark read silently — Brain will see it during the next briefing via MCP
+      await this.markRead(messageId);
+      logger.debug(
+        { from: senderName, subject },
+        'Non-urgent email cached and marked read',
+      );
+    }
+
+    return true;
+  }
+
+  private async deliverEmailToBrain(
+    messageId: string,
+    threadId: string,
+    senderName: string,
+    senderEmail: string,
+    subject: string,
+    timestamp: string,
+    mainJid: string,
+  ): Promise<void> {
+    if (!this.gmail) return;
+
+    const msg = await this.gmail.users.messages.get({
+      userId: 'me',
+      id: messageId,
+      format: 'full',
+    });
+
+    const body = this.extractTextBody(msg.data.payload);
+    if (!body) {
+      logger.debug(
+        { messageId, subject },
+        'Urgent email has no text body, skipping delivery',
+      );
+      await this.markRead(messageId);
       return;
     }
 
-    const mainJid = mainEntry[0];
     const content = `[Email from ${senderName} <${senderEmail}>]\nSubject: ${subject}\n\n${body}`;
 
     this.opts.onMessage(mainJid, {
@@ -305,7 +415,15 @@ export class GmailChannel implements Channel {
       is_from_me: false,
     });
 
-    // Mark as read
+    await this.markRead(messageId);
+    logger.info(
+      { from: senderName, subject },
+      'Urgent/VIP email delivered to Brain',
+    );
+  }
+
+  private async markRead(messageId: string): Promise<void> {
+    if (!this.gmail) return;
     try {
       await this.gmail.users.messages.modify({
         userId: 'me',
@@ -315,38 +433,26 @@ export class GmailChannel implements Channel {
     } catch (err) {
       logger.warn({ messageId, err }, 'Failed to mark email as read');
     }
-
-    logger.info(
-      { mainJid, from: senderName, subject },
-      'Gmail email delivered to main group',
-    );
   }
 
   private extractTextBody(
     payload: gmail_v1.Schema$MessagePart | undefined,
   ): string {
     if (!payload) return '';
-
-    // Direct text/plain body
     if (payload.mimeType === 'text/plain' && payload.body?.data) {
       return Buffer.from(payload.body.data, 'base64').toString('utf-8');
     }
-
-    // Multipart: search parts recursively
     if (payload.parts) {
-      // Prefer text/plain
       for (const part of payload.parts) {
         if (part.mimeType === 'text/plain' && part.body?.data) {
           return Buffer.from(part.body.data, 'base64').toString('utf-8');
         }
       }
-      // Recurse into nested multipart
       for (const part of payload.parts) {
         const text = this.extractTextBody(part);
         if (text) return text;
       }
     }
-
     return '';
   }
 }
