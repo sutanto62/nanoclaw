@@ -4,6 +4,7 @@
  */
 import { ChildProcess, exec, spawn } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import {
@@ -62,6 +63,7 @@ function buildVolumeMounts(
 ): VolumeMount[] {
   const mounts: VolumeMount[] = [];
   const projectRoot = process.cwd();
+  const homeDir = os.homedir();
   const groupDir = resolveGroupFolderPath(group.folder);
 
   if (isMain) {
@@ -163,6 +165,16 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+  // Gmail credentials directory (for Gmail MCP inside the container)
+  const gmailDir = path.join(homeDir, '.gmail-mcp');
+  if (fs.existsSync(gmailDir)) {
+    mounts.push({
+      hostPath: gmailDir,
+      containerPath: '/home/node/.gmail-mcp',
+      readonly: false, // MCP may need to refresh OAuth tokens
+    });
+  }
+
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
   const groupIpcDir = resolveGroupIpcPath(group.folder);
@@ -215,6 +227,7 @@ function buildVolumeMounts(
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
+  isMain: boolean,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
@@ -247,7 +260,14 @@ function buildContainerArgs(
   const hostUid = process.getuid?.();
   const hostGid = process.getgid?.();
   if (hostUid != null && hostUid !== 0 && hostUid !== 1000) {
-    args.push('--user', `${hostUid}:${hostGid}`);
+    if (isMain) {
+      // Main containers start as root so the entrypoint can mount --bind
+      // to shadow .env. Privileges are dropped via setpriv in entrypoint.sh.
+      args.push('-e', `RUN_UID=${hostUid}`);
+      args.push('-e', `RUN_GID=${hostGid}`);
+    } else {
+      args.push('--user', `${hostUid}:${hostGid}`);
+    }
     args.push('-e', 'HOME=/home/node');
   }
 
@@ -278,7 +298,7 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+  const containerArgs = buildContainerArgs(mounts, containerName, input.isMain);
 
   logger.debug(
     {

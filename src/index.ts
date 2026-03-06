@@ -7,9 +7,11 @@ import {
   IDLE_TIMEOUT,
   POLL_INTERVAL,
   TIMEZONE,
+  TELEGRAM_BOT_POOL,
   TRIGGER_PATTERN,
 } from './config.js';
 import { startCredentialProxy } from './credential-proxy.js';
+import { initBotPool } from './channels/telegram.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -595,6 +597,10 @@ async function main(): Promise<void> {
   if (channels.length === 0) {
     logger.fatal('No channels connected');
     process.exit(1);
+  }
+
+  if (TELEGRAM_BOT_POOL.length > 0) {
+    await initBotPool(TELEGRAM_BOT_POOL);
   }
 
   // Start subsystems (independently of connection handler)
