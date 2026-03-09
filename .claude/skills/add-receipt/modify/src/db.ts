@@ -670,9 +670,7 @@ export function storeReceipt(receipt: Omit<Receipt, 'created_at'>): void {
 
 export function getReceipts(groupFolder: string): Receipt[] {
   return db
-    .prepare(
-      'SELECT * FROM receipts WHERE group_folder = ? ORDER BY date DESC, created_at DESC',
-    )
+    .prepare('SELECT * FROM receipts WHERE group_folder = ? ORDER BY date DESC, created_at DESC')
     .all(groupFolder) as Receipt[];
 }
 

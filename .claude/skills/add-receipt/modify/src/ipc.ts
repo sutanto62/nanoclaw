@@ -11,13 +11,7 @@ import {
 } from './config.js';
 import { sendPoolMessage } from './channels/telegram.js';
 import { AvailableGroup } from './container-runner.js';
-import {
-  createTask,
-  deleteTask,
-  getTaskById,
-  storeReceipt,
-  updateTask,
-} from './db.js';
+import { createTask, deleteTask, getTaskById, storeReceipt, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import { writeReceiptsSnapshot } from './receipt.js';
@@ -35,7 +29,6 @@ export interface IpcDeps {
     availableGroups: AvailableGroup[],
     registeredJids: Set<string>,
   ) => void;
-  onTasksChanged: () => void;
 }
 
 let ipcWatcherRunning = false;
@@ -236,15 +229,9 @@ export async function processTaskIpc(
           notes: r.notes ?? '',
         });
         writeReceiptsSnapshot(sourceGroup);
-        logger.info(
-          { id, sourceGroup, store: r.store },
-          'Receipt saved via IPC',
-        );
+        logger.info({ id, sourceGroup, store: r.store }, 'Receipt saved via IPC');
       } else {
-        logger.warn(
-          { data, sourceGroup },
-          'save_receipt: missing required fields',
-        );
+        logger.warn({ data, sourceGroup }, 'save_receipt: missing required fields');
       }
       break;
     }
@@ -340,7 +327,6 @@ export async function processTaskIpc(
           { taskId, sourceGroup, targetFolder, contextMode },
           'Task created via IPC',
         );
-        deps.onTasksChanged();
       }
       break;
 
@@ -353,7 +339,6 @@ export async function processTaskIpc(
             { taskId: data.taskId, sourceGroup },
             'Task paused via IPC',
           );
-          deps.onTasksChanged();
         } else {
           logger.warn(
             { taskId: data.taskId, sourceGroup },
@@ -372,7 +357,6 @@ export async function processTaskIpc(
             { taskId: data.taskId, sourceGroup },
             'Task resumed via IPC',
           );
-          deps.onTasksChanged();
         } else {
           logger.warn(
             { taskId: data.taskId, sourceGroup },
@@ -391,7 +375,6 @@ export async function processTaskIpc(
             { taskId: data.taskId, sourceGroup },
             'Task cancelled via IPC',
           );
-          deps.onTasksChanged();
         } else {
           logger.warn(
             { taskId: data.taskId, sourceGroup },
@@ -462,7 +445,6 @@ export async function processTaskIpc(
           { taskId: data.taskId, sourceGroup, updates },
           'Task updated via IPC',
         );
-        deps.onTasksChanged();
       }
       break;
 

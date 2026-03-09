@@ -1,0 +1,14 @@
+skill: add-receipt
+version: 1.0.0
+core_version: 1.2.1
+description: "Receipt extraction and expense tracking with SQLite storage and IPC-based agent integration"
+adds:
+  - src/receipt.ts
+modifies:
+  - src/db.ts
+  - src/types.ts
+  - src/ipc.ts
+  - container/skills/receipt-tracker/SKILL.md
+conflicts: []
+depends: []
+test: "npm run typecheck"

@@ -81,7 +81,7 @@ export interface Receipt {
   id: string;
   chat_jid: string;
   group_folder: string;
-  date: string; // YYYY-MM-DD
+  date: string;        // YYYY-MM-DD
   store: string;
   amount: number;
   currency: string;
