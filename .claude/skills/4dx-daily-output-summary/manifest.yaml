@@ -1,0 +1,9 @@
+skill: 4dx-daily-output-summary
+version: 1.0.0
+description: "EOD output summary (M7): Whirlwind Ledger, WIG Output, M1 commitment review, scoreboard delta, carry-forward, and binary Win/Loss verdict aligned to 4DX"
+core_version: 1.2.1
+adds:
+  - container/skills/4dx-daily-output-summary/SKILL.md
+modifies: []
+conflicts: []
+depends: []

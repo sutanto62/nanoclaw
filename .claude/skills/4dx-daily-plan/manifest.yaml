@@ -1,0 +1,10 @@
+skill: 4dx-daily-plan
+version: 1.0.0
+description: "Morning daily plan (M1): selects 2 WIGs by urgency, generates time-boxed schedule, lead measure commitments, scoreboard, and binary win check aligned to 4DX"
+core_version: 1.2.1
+adds:
+  - container/skills/4dx-daily-plan/SKILL.md
+  - scripts/setup-4dx-crons.ts
+modifies: []
+conflicts: []
+depends: []

@@ -54,6 +54,20 @@ If it exists, read it and offer to continue editing or start fresh.
 
 ## Step 2: Read context from workspace
 
+### 2A — Read 4DX structured data
+
+```bash
+cat /workspace/group/4dx/state.json 2>/dev/null || echo "NO_STATE"
+cat /workspace/group/4dx/config.json 2>/dev/null || echo "NO_CONFIG"
+```
+
+From `state.json` extract: `scoreboard` (weekly_done, weekly_target, lead_streak, lag_current, lag_status per WIG), `carry_forward`.
+From `config.json` extract: WIG names, lag metrics, lead measure names and weekly_targets.
+
+Use this structured data to pre-fill the Highlights, Lowlights, and Business Observations sections (WIG progress, streaks, lag measure movements).
+
+### 2B — Read workspace notes
+
 Check for any notes or task files in the group workspace:
 
 ```bash
@@ -187,10 +201,11 @@ ok / skip / add: … / update N: … / remove N
 
 ## Step 4: Write the summary
 
-Create the output directory if needed:
+Create the output directories if needed:
 
 ```bash
 mkdir -p /workspace/group/weekly
+mkdir -p /workspace/group/4dx/sessions
 ```
 
 Write `/workspace/group/weekly/${WEEK_LABEL}.md`:
@@ -224,10 +239,63 @@ Rules:
 - No AI filler language ("It's worth noting…", "In summary…").
 - Skipped sections: single bullet `- (none this week)`.
 
+After writing the markdown, write the weekly session JSON and reset the scoreboard weekly counters:
+
+```python
+import json
+from datetime import date
+
+# Write sessions/YYYY-WNN.json
+with open('/workspace/group/4dx/state.json') as f:
+    state = json.load(f)
+with open('/workspace/group/4dx/config.json') as f:
+    config = json.load(f)
+
+# Build session record from current state
+session = {
+    'week': WEEK_LABEL,
+    'win_days': WIN_DAY_COUNT,       # count of '🏆 WIN' verdicts this week
+    'total_days': TOTAL_ACTIVE_DAYS, # days where M1+M7 were both completed
+    'lead_completions': {
+        'wig1': state['scoreboard']['wig1']['weekly_done'],
+        'wig2': state['scoreboard']['wig2']['weekly_done'],
+        'wig3': state['scoreboard']['wig3']['weekly_done'],
+        'wig4': state['scoreboard']['wig4']['weekly_done'],
+    },
+    'lag_snapshots': {
+        'wig1': state['scoreboard']['wig1']['lag_current'],
+        'wig2': state['scoreboard']['wig2']['lag_current'],
+        'wig3': state['scoreboard']['wig3']['lag_current'],
+        'wig4': state['scoreboard']['wig4']['lag_current'],
+    },
+    'carry_forward_resolved': [],    # items from prior carry_forward now cleared
+    'weekly_summary': 'One paragraph summary of the week.'
+}
+
+session_path = f'/workspace/group/4dx/sessions/{WEEK_LABEL}.json'
+with open(session_path, 'w') as f:
+    json.dump(session, f, indent=2)
+
+# Reset weekly_done for new week
+for wig_key in ['wig1', 'wig2', 'wig3', 'wig4']:
+    state['scoreboard'][wig_key]['weekly_done'] = 0
+
+state['updated'] = date.today().isoformat()
+with open('/workspace/group/4dx/state.json', 'w') as f:
+    json.dump(state, f, indent=2)
+
+print(f'Session saved: {session_path}')
+print('Scoreboard weekly_done reset for new week')
+```
+
+> **Note:** Build the actual Python script with real win_day_count, total_active_days, and weekly_summary values from the session.
+
 After writing, confirm to the user:
 
 ```
 Weekly summary saved: weekly/{{WEEK_LABEL}}.md
+4DX session saved: 4dx/sessions/{{WEEK_LABEL}}.json
+Scoreboard reset for new week.
 ```
 
 ---
