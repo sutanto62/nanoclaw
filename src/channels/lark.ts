@@ -1,4 +1,9 @@
-import { Client, Domain, EventDispatcher, WSClient } from '@larksuiteoapi/node-sdk';
+import {
+  Client,
+  Domain,
+  EventDispatcher,
+  WSClient,
+} from '@larksuiteoapi/node-sdk';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';

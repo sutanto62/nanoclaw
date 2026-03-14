@@ -5,7 +5,9 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 // Capture the factory passed to registerChannel at import time.
 // We do this inside the mock itself because vi.clearAllMocks() in beforeEach
 // wipes mock.calls before factory tests run.
-const factoryRef = vi.hoisted(() => ({ fn: null as ((opts: any) => any) | null }));
+const factoryRef = vi.hoisted(() => ({
+  fn: null as ((opts: any) => any) | null,
+}));
 
 vi.mock('./registry.js', () => ({
   registerChannel: vi.fn((name: string, factory: any) => {
@@ -177,7 +179,9 @@ describe('LarkChannel', () => {
     it('registers im.message.receive_v1 event handler on connect', async () => {
       const channel = new LarkChannel(createTestOpts());
       await channel.connect();
-      expect(typeof dispatcherRef.handlers['im.message.receive_v1']).toBe('function');
+      expect(typeof dispatcherRef.handlers['im.message.receive_v1']).toBe(
+        'function',
+      );
     });
 
     it('isConnected() returns false before connect', () => {
@@ -402,7 +406,9 @@ describe('LarkChannel', () => {
       const channel = new LarkChannel(opts);
       await channel.connect();
 
-      clientRef.current.im.chat.get.mockRejectedValueOnce(new Error('API error'));
+      clientRef.current.im.chat.get.mockRejectedValueOnce(
+        new Error('API error'),
+      );
 
       await triggerMessage(makeData({}));
 
@@ -427,7 +433,9 @@ describe('LarkChannel', () => {
       await triggerMessage(
         makeData({
           content: JSON.stringify({ text: '@AndyBot what time is it?' }),
-          mentions: [{ key: '@_user_1', id: { open_id: 'ou_bot' }, name: 'Andy Bot' }],
+          mentions: [
+            { key: '@_user_1', id: { open_id: 'ou_bot' }, name: 'Andy Bot' },
+          ],
         }),
       );
 
@@ -448,7 +456,11 @@ describe('LarkChannel', () => {
         makeData({
           content: JSON.stringify({ text: '@Alice check this out' }),
           mentions: [
-            { key: '@_user_1', id: { user_id: 'usr_alice', open_id: 'ou_alice' }, name: 'Alice' },
+            {
+              key: '@_user_1',
+              id: { user_id: 'usr_alice', open_id: 'ou_alice' },
+              name: 'Alice',
+            },
           ],
         }),
       );
@@ -467,7 +479,9 @@ describe('LarkChannel', () => {
       await triggerMessage(
         makeData({
           content: JSON.stringify({ text: '@Andy what is the time?' }),
-          mentions: [{ key: '@_user_1', id: { open_id: 'ou_bot' }, name: 'Andy Bot' }],
+          mentions: [
+            { key: '@_user_1', id: { open_id: 'ou_bot' }, name: 'Andy Bot' },
+          ],
         }),
       );
 
@@ -483,7 +497,10 @@ describe('LarkChannel', () => {
       await channel.connect();
 
       await triggerMessage(
-        makeData({ content: JSON.stringify({ text: 'plain message' }), mentions: [] }),
+        makeData({
+          content: JSON.stringify({ text: 'plain message' }),
+          mentions: [],
+        }),
       );
 
       expect(opts.onMessage).toHaveBeenCalledWith(
@@ -501,7 +518,11 @@ describe('LarkChannel', () => {
         makeData({
           content: JSON.stringify({ text: '@Alice @AndyBot help' }),
           mentions: [
-            { key: '@_user_1', id: { user_id: 'usr_alice', open_id: 'ou_alice' }, name: 'Alice' },
+            {
+              key: '@_user_1',
+              id: { user_id: 'usr_alice', open_id: 'ou_alice' },
+              name: 'Alice',
+            },
             { key: '@_user_2', id: { open_id: 'ou_bot' }, name: 'Andy Bot' },
           ],
         }),
@@ -771,23 +792,33 @@ describe('LarkChannel', () => {
 
   describe('ownsJid', () => {
     it('owns lark: JIDs', () => {
-      expect(new LarkChannel(createTestOpts()).ownsJid('lark:oc_abc123')).toBe(true);
+      expect(new LarkChannel(createTestOpts()).ownsJid('lark:oc_abc123')).toBe(
+        true,
+      );
     });
 
     it('does not own Telegram JIDs', () => {
-      expect(new LarkChannel(createTestOpts()).ownsJid('tg:123456')).toBe(false);
+      expect(new LarkChannel(createTestOpts()).ownsJid('tg:123456')).toBe(
+        false,
+      );
     });
 
     it('does not own WhatsApp group JIDs', () => {
-      expect(new LarkChannel(createTestOpts()).ownsJid('12345@g.us')).toBe(false);
+      expect(new LarkChannel(createTestOpts()).ownsJid('12345@g.us')).toBe(
+        false,
+      );
     });
 
     it('does not own Slack JIDs', () => {
-      expect(new LarkChannel(createTestOpts()).ownsJid('slack:C0123456789')).toBe(false);
+      expect(
+        new LarkChannel(createTestOpts()).ownsJid('slack:C0123456789'),
+      ).toBe(false);
     });
 
     it('does not own unknown JID formats', () => {
-      expect(new LarkChannel(createTestOpts()).ownsJid('random-string')).toBe(false);
+      expect(new LarkChannel(createTestOpts()).ownsJid('random-string')).toBe(
+        false,
+      );
     });
   });
 
@@ -797,7 +828,9 @@ describe('LarkChannel', () => {
     it('is a no-op (Lark has no typing indicator API)', async () => {
       const channel = new LarkChannel(createTestOpts());
       await channel.connect();
-      await expect(channel.setTyping('lark:oc_abc123', true)).resolves.toBeUndefined();
+      await expect(
+        channel.setTyping('lark:oc_abc123', true),
+      ).resolves.toBeUndefined();
     });
 
     it('does not throw when called without connecting', async () => {

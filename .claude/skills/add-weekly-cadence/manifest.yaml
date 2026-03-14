@@ -1,0 +1,9 @@
+skill: weekly-cadence
+version: 1.0.0
+description: "Structured weekly review skill for container agents: highlights, lowlights, risks, business observations, next actions, and requests"
+core_version: 1.2.1
+adds:
+  - container/skills/weekly-cadence/SKILL.md
+modifies: []
+conflicts: []
+depends: []
