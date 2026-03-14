@@ -155,7 +155,7 @@ Tell the user:
 
 > Gmail is connected! Send this in your main channel:
 >
-> `@Andy check my recent emails` or `@Andy list my Gmail labels`
+> `@Brain check my recent emails` or `@Brain list my Gmail labels` (use `ASSISTANT_NAME` from `.env`)
 
 ### Test channel mode (Channel mode only)
 

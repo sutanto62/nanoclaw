@@ -155,7 +155,7 @@ Tell the user:
 
 > Send a message to your registered Telegram chat:
 > - For main chat: Any message works
-> - For non-main: `@Andy hello` or @mention the bot
+> - For non-main: `@<ASSISTANT_NAME> hello` (read trigger from `.env` `ASSISTANT_NAME`) or @mention the bot
 >
 > The bot should respond within a few seconds.
 

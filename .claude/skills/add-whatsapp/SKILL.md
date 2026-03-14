@@ -187,12 +187,12 @@ AskUserQuestion: Is this a shared phone number (personal WhatsApp) or a dedicate
 - **Dedicated number** - A separate phone/SIM for the assistant
 
 AskUserQuestion: What trigger word should activate the assistant?
-- **@Andy** - Default trigger
+- Read `ASSISTANT_NAME` from `.env` first — if set, use `@<ASSISTANT_NAME>` as the default and confirm with the user
 - **@Claw** - Short and easy
 - **@Claude** - Match the AI name
 
 AskUserQuestion: What should the assistant call itself?
-- **Andy** - Default name
+- Read `ASSISTANT_NAME` from `.env` first — if set, use it as the default and confirm with the user
 - **Claw** - Short and easy
 - **Claude** - Match the AI name
 
@@ -279,7 +279,7 @@ Tell the user:
 
 > Send a message to your registered WhatsApp chat:
 > - For self-chat / main: Any message works
-> - For groups: Use the trigger word (e.g., "@Andy hello")
+> - For groups: Use the trigger word from `.env` `ASSISTANT_NAME` (e.g., "@Brain hello")
 >
 > The assistant should respond within a few seconds.
 
