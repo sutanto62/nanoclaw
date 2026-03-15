@@ -1,6 +1,6 @@
 ---
 name: 4dx-daily-plan
-description: Install the 4DX daily plan skill into container agents. Generates a structured morning daily plan (M1) — WIG focus, time box, lead measures, scoreboard, and binary win check — triggered by "daily plan", "what's today", "today plan", or "today".
+description: Install the 4DX daily plan skill into container agents. Generates a structured morning daily plan (M1) — WIG focus, time box, lead measures, scoreboard, and binary win check — triggered by "daily plan", "morning plan", "plan my day", "M1", "today plan", or "what should I focus on today".
 ---
 
 # 4DX Daily Plan
@@ -34,7 +34,13 @@ test -f container/skills/4dx-daily-plan/SKILL.md && echo "OK" || echo "ERROR: fi
 Run the setup script to register the three 4DX cron tasks in SQLite (idempotent — skips if already present):
 
 ```bash
-npx tsx scripts/setup-4dx-crons.ts telegram_main
+npx tsx scripts/setup-4dx-crons.ts <group_folder>
+```
+
+Replace `<group_folder>` with your main group's folder name (e.g. `telegram_main`, `lark_main`, `whatsapp_main`). Find it by checking `groups/` for the folder with `isMain: true` in SQLite, or run:
+
+```bash
+sqlite3 store/messages.db "SELECT folder FROM registered_groups WHERE is_main = 1;"
 ```
 
 Expected output:

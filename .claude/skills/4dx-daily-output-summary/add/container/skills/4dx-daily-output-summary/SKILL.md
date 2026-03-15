@@ -39,27 +39,27 @@ Use this skill when the user says:
 Read structured state and config from the group workspace:
 
 ```bash
-cat /workspace/group/4dx/state.json 2>/dev/null || echo "NO_STATE"
-cat /workspace/group/4dx/config.json 2>/dev/null || echo "NO_CONFIG"
+cat /workspace/group/4dx/scoreboard.json 2>/dev/null || echo "NO_STATE"
+cat /workspace/group/4dx/wig.json 2>/dev/null || echo "NO_CONFIG"
 ```
 
-From `state.json` extract:
+From `scoreboard.json` extract:
 - `today.m1_commitments` — the morning commitments to cross-reference (use instead of re-reading the markdown file)
 - `today.wig_focus` — the WIGs selected this morning
 - `scoreboard` — current lag_status, lag_current, weekly_done, weekly_target, lead_streak per WIG
 - `carry_forward` — items from prior sessions
 
-From `config.json` extract WIG definitions (name, lag metric, leads with weekly_target).
+From `wig.json` extract WIG definitions (name, description, area, lag metric, leads with weekly_target). Use `description` when printing WIG focus context and `area` to label each WIG.
 
 ### After summary generated
 
-Write back to `state.json`:
+Write back to `scoreboard.json`:
 
 ```python
 import json
 from datetime import date
 
-with open('/workspace/group/4dx/state.json') as f:
+with open('/workspace/group/4dx/scoreboard.json') as f:
     state = json.load(f)
 
 # Set M7 fields
@@ -83,10 +83,10 @@ state['carry_forward'] = ['Unresolved item 1', ...]
 
 state['updated'] = date.today().isoformat()
 
-with open('/workspace/group/4dx/state.json', 'w') as f:
+with open('/workspace/group/4dx/scoreboard.json', 'w') as f:
     json.dump(state, f, indent=2)
 
-print('state.json updated with M7 data')
+print('scoreboard.json updated with M7 data')
 ```
 
 > **Note:** Build the actual Python script with real values — do not use the placeholders above verbatim.
@@ -124,9 +124,9 @@ cat /workspace/group/lark/latest.md 2>/dev/null | head -50 || echo "NO_LARK_CACH
 
 ### 1C — Retrieve morning M1 commitments
 
-Prefer `state.json` (already loaded in Storage Protocol) — use `today.m1_commitments` and `today.wig_focus` directly.
+Prefer `scoreboard.json` (already loaded in Storage Protocol) — use `today.m1_commitments` and `today.wig_focus` directly.
 
-If `state.json` has no `today.m1_commitments` or the date doesn't match, fall back to the markdown file:
+If `scoreboard.json` has no `today.m1_commitments` or the date doesn't match, fall back to the markdown file:
 
 ```bash
 cat /workspace/group/daily/${DATE_ISO}.md 2>/dev/null || echo "NO_M1_FILE"
@@ -199,8 +199,8 @@ Output in this exact structure:
 
 | WIG | Lead Measure Action | Committed? | Scoreboard Impact |
 |---|---|---|---|
-| WIG [X] — [Name] | [specific action taken] | ✅ Yes / ➕ Bonus / ❌ Missed | [delta or "no change"] |
-| WIG [Y] — [Name] | [specific action taken] | ✅ Yes / ➕ Bonus / ❌ Missed | [delta or "no change"] |
+| WIG [X] — [Name] `[Area]` | [specific action taken] | ✅ Yes / ➕ Bonus / ❌ Missed | [delta or "no change"] |
+| WIG [Y] — [Name] `[Area]` | [specific action taken] | ✅ Yes / ➕ Bonus / ❌ Missed | [delta or "no change"] |
 
 > ✅ Committed = was on morning M1 plan · ➕ Bonus = unplanned WIG action · ❌ Missed = committed but not done
 
@@ -223,10 +223,10 @@ Output in this exact structure:
 
 | WIG | Lag Measure | Yesterday | Today | Trend |
 |---|---|---|---|---|
-| WIG 1 — ERP Delivery | Go-live readiness | [%] | [%] | ↑ / → / ↓ |
-| WIG 2 — Mid-Farmer CSAT | CSAT score | [x.x] | [x.x] | ↑ / → / ↓ |
-| WIG 3 — Smallholder Growth | Active users | [n] | [n] | ↑ / → / ↓ |
-| WIG 4 — Eng Culture | Lead measure streak | [n days] | [n days] | ↑ / → / ↓ |
+| WIG 1 — ERP Delivery `[Whirlwind]` | Go-live readiness | [%] | [%] | ↑ / → / ↓ |
+| WIG 2 — Mid-Farmer CSAT `[Farmer]` | CSAT score | [x.x] | [x.x] | ↑ / → / ↓ |
+| WIG 3 — Smallholder Growth `[Farmer]` | Active users | [n] | [n] | ↑ / → / ↓ |
+| WIG 4 — Eng Culture `[Whirlwind]` | Lead measure streak | [n days] | [n days] | ↑ / → / ↓ |
 
 > If no new data is available for a lag measure, mark as `—` and note "no update today."
 > If ≥ 3 WIGs show `—` in the Today column, add: `⚠️ Scoreboard blind — pull data from Metabase or flag to team before EOD.`
@@ -295,6 +295,6 @@ mkdir -p /workspace/group/4dx
 
 Append or write to `/workspace/group/daily/${DATE_ISO}.md` — add the M7 summary below the M1 plan if it exists, or create a new file.
 
-Then update `state.json` as described in the Storage Protocol above. Build and run the real Python script with actual values from the session (verdict, completed list, updated scoreboard, new carry_forward).
+Then update `scoreboard.json` as described in the Storage Protocol above. Build and run the real Python script with actual values from the session (verdict, completed list, updated scoreboard, new carry_forward).
 
-Confirm: `EOD summary saved: daily/${DATE_ISO}.md | state.json updated`
+Confirm: `EOD summary saved: daily/${DATE_ISO}.md | scoreboard.json updated`

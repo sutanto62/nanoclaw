@@ -1,50 +1,29 @@
 ---
 name: 4dx-daily-plan
-version: 1.0.0
-description: >
-  Generate Cayadi's structured morning daily plan using the 4DX framework.
-  Use this skill whenever the user says "daily plan", "morning plan", "plan my day",
-  "M1", "what should I focus on today", or starts a morning session.
-  Produces an actionable checklist focused on 2 WIGs selected by urgency/date logic.
-  Always trigger this skill at the start of a working day — do not answer freehand.
-allowed-tools:
-  - Bash
-  - Read
-  - Write
----
-
-# 4DX Daily Plan (M1)
-
-## Purpose
-
-Generate a focused, actionable morning plan for Cayadi. Surface the 2 most urgent WIGs today, commit to Lead Measure actions, and flag whirlwind blockers.
-
-## Trigger
-
-Use this skill when the user says:
-- "daily plan", "morning plan", "plan my day", "M1"
-- "what should I focus on today", "what's today", "today plan", "today"
-- Any morning session opener
-
+description: Morning 4DX daily plan (M1) and surface 2 of most urgent WIGs today, commit to Lead Measure actions, and flag whirlwind blockers. Trigger on: "daily plan", "morning plan", "plan my day", "M1", "today plan", "what should I focus on today", or start of working day.
 ---
 
 ## Storage Protocol
 
 ### On startup
 
-Read `4dx/config.json` and `4dx/state.json` from the group workspace:
+Read `4dx/wig.json` and `4dx/scoreboard.json` from the group workspace:
 
 ```bash
-cat /workspace/group/4dx/config.json 2>/dev/null || echo "NO_CONFIG"
-cat /workspace/group/4dx/state.json 2>/dev/null || echo "NO_STATE"
+cat /workspace/group/4dx/wig.json 2>/dev/null || echo "NO_CONFIG"
+cat /workspace/group/4dx/scoreboard.json 2>/dev/null || echo "NO_STATE"
 ```
 
 Use these files as the authoritative source for WIG definitions, scoreboard, and carry_forward.
 Do NOT re-derive this information from prose.
 
+If `wig.json` returns `NO_CONFIG`: stop and reply — "⚠️ WIG configuration not found. Create `4dx/wig.json` in your group workspace before running the daily plan."
+
+If `scoreboard.json` returns `NO_STATE`: initialize a fresh scoreboard with empty `scoreboard` array and empty `carry_forward`. Do not abort — this is expected on first run.
+
 ### After plan generated
 
-Update `state.json` with today's session data:
+Update `scoreboard.json` with today's session data:
 - Set `today.date` to `DATE_ISO`
 - Set `today.wig_focus` to the 2 WIGs selected
 - Set `today.m1_commitments` to the lead measure commitments (array of objects: `{wig, lead_measure, action, due}`)
@@ -64,11 +43,12 @@ d = date.today()
 print(f'DATE_ISO={d.isoformat()}')
 print(f'DATE_LABEL={d.strftime(\"%A, %d %B %Y\")}')
 print(f'WEEKDAY={d.weekday()}')
-print(f'DAYS_TO_MARCH16={(date(2026,3,16)-d).days}')
 "
 ```
 
-Set `DATE_ISO`, `DATE_LABEL`, `WEEKDAY`, `DAYS_TO_MARCH16`.
+Set `DATE_ISO`, `DATE_LABEL`, `WEEKDAY`.
+
+Then compute days remaining for each WIG with a `deadline` field from `wig.json`. Use these to apply urgency signals in Step 2 — do not hardcode any deadline dates here.
 
 If `WEEKDAY` is 5 or 6: note "Weekend — optional check" and produce a shortened plan (WIG Focus + Lead Measures only).
 
@@ -76,7 +56,7 @@ If `WEEKDAY` is 5 or 6: note "Weekend — optional check" and produce a shortene
 
 ## Step 2 — Select Today's 2 WIGs
 
-Use the WIG definitions from `4dx/config.json` (loaded in Storage Protocol above). Evaluate all WIGs against the urgency signals below (in order). Pick the top 2.
+Use the WIG definitions from `4dx/wig.json` (loaded in Storage Protocol above). Each WIG now has `area` (e.g. `Whirlwind`, `Farmer`) and `description` (lag narrative in "from X to Y when date" format). Evaluate all WIGs against the urgency signals below (in order). Pick the top 2. When displaying WIGs, group by `area` and show the `area` tag next to each WIG name.
 
 ### Urgency Signals
 
@@ -101,8 +81,8 @@ Output the plan in this exact structure:
 ### 🗓️ Daily Plan — [Day, Date]
 
 **Today's WIG Focus:**
-- WIG [X] — [Name]: [1-line urgency rationale]
-- WIG [Y] — [Name]: [1-line urgency rationale]
+- WIG [X] — [Name] `[Area]`: [description as lag context] — [1-line urgency rationale]
+- WIG [Y] — [Name] `[Area]`: [description as lag context] — [1-line urgency rationale]
 
 ---
 
@@ -147,10 +127,7 @@ Output the plan in this exact structure:
 
 | WIG | Quarterly | This Week |
 |---|---|---|
-| WIG 1 — ERP Delivery | 🟢/🟡/🔴 | ✅/❌ |
-| WIG 2 — Mid-Farmer CSAT | 🟢/🟡/🔴 | ✅/❌ |
-| WIG 3 — Smallholder Growth | 🟢/🟡/🔴 | ✅/❌ |
-| WIG 4 — Engineering Culture | 🟢/🟡/🔴 | ✅/❌ |
+| [one row per WIG from wig.json: WIG [id] — [name] `[area]`] | 🟢/🟡/🔴 | ✅/❌ |
 
 > 🟢 On track · 🟡 At risk · 🔴 Behind · ✅ Lead measures hit this week · ❌ Missed
 
@@ -178,16 +155,16 @@ Output the plan in this exact structure:
 - Every action item: specific, starts with a verb, has owner + deadline.
 - Lead Measures must name the specific process or artifact being changed — not "work on ERP" but "retire the Excel billing tracker for the Ops team."
 - If today is Monday: add a one-line reminder → "📌 Weekly cadence: commit Lead Measures for the week."
-- If WIG 1 deadline is ≤ 7 days away: always auto-select WIG 1 regardless of rotation logic.
+- Any WIG with a deadline ≤ 7 days away is always auto-selected regardless of rotation logic (derived from `deadline` in wig.json, not hardcoded).
 
 ## Time Box Rules
 
-- Slots: 08:30–17:30. Lunch fixed at 12:30. EOD wrap at 17:30.
-- WIG deep work: 08:30–10:00 = one continuous block. No interruptions. This is offense.
-- Afternoon WIG: 14:30 — one focused slot for WIG Y lead measure.
-- Northstar Metric: 10:30, 15:30 — review lag measures, dashboards, data.
+- Slots: 08:00–17:00. Lunch fixed at 12:30. EOD wrap at 17:00.
+- WIG deep work: 08:00–09:30 = one continuous block. No interruptions. This is offense.
+- Afternoon WIG: 14:00 — one focused slot for WIG Y lead measure.
+- Northstar Metric: 10:00, 15:00 — review lag measures, dashboards, data.
 - Whirlwind: 11:30, 13:30 — meetings, ops, reactive tasks.
-- Accountability: 16:30 (scoreboard update) + 17:30 (EOD commit + tomorrow's 08:30 task locked).
+- Accountability: 16:00 (scoreboard update) + 17:00 (EOD commit + tomorrow's 08:00 task locked).
 - Never leave activity column blank — infer from context if not explicit.
 
 ---
@@ -201,31 +178,34 @@ mkdir -p /workspace/group/4dx
 
 Write `/workspace/group/daily/${DATE_ISO}.md` with the full plan output.
 
-Then update `state.json` with today's commitments. Build a Python script that writes the real values:
+Then update `scoreboard.json` with today's commitments. Build a Python script that writes the real values:
 
 ```python
 import json
+from datetime import date
 
-with open('/workspace/group/4dx/state.json') as f:
+date_iso = date.today().isoformat()
+
+with open('/workspace/group/4dx/scoreboard.json') as f:
     state = json.load(f)
 
-state['updated'] = DATE_ISO  # actual date string
+state['updated'] = date_iso
 state['today'] = {
-    'date': DATE_ISO,
-    'wig_focus': [WIG_A_ID, WIG_B_ID],  # actual WIG ids (int)
+    'date': date_iso,
+    'wig_focus': [1, 2],  # substitute actual WIG id integers selected in Step 2
     'm1_commitments': [
-        # one entry per Lead Measure Commitment row:
-        {'wig': WIG_ID, 'lead_measure': 'Lead name', 'action': 'Action text', 'due': 'HH:MM or EOD'},
+        # one entry per row in Lead Measure Commitments table — substitute real values:
+        {'wig': 1, 'lead_measure': 'Lead name', 'action': 'Action text', 'due': 'HH:MM or EOD'},
     ],
     'm7_completed': None,
     'm7_verdict': None,
     'm7_summary': None
 }
 
-with open('/workspace/group/4dx/state.json', 'w') as f:
+with open('/workspace/group/4dx/scoreboard.json', 'w') as f:
     json.dump(state, f, indent=2)
 
-print('state.json updated')
+print('scoreboard.json updated')
 ```
 
-Confirm: `Daily plan saved: daily/${DATE_ISO}.md | state.json updated`
+Confirm: `Daily plan saved: daily/${DATE_ISO}.md | scoreboard.json updated`
