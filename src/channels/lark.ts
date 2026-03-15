@@ -1,3 +1,6 @@
+import fs from 'fs';
+import path from 'path';
+
 import { Client, Domain } from '@larksuiteoapi/node-sdk';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
@@ -11,6 +14,86 @@ import {
   OnInboundMessage,
   RegisteredGroup,
 } from '../types.js';
+
+const STOPWORDS = new Set([
+  'and',
+  'the',
+  'for',
+  'from',
+  'with',
+  'this',
+  'that',
+  'have',
+  'been',
+  'will',
+  'when',
+  'date',
+  'grow',
+  'into',
+  'over',
+  'live',
+  'goal',
+  'plan',
+  'per',
+  'day',
+  'week',
+  'mid',
+  'top',
+  'held',
+  'done',
+  'sent',
+  'session',
+  'count',
+  'score',
+  'point',
+  'points',
+  'resolved',
+  'shipped',
+  'reviewed',
+  'completed',
+  'triaged',
+  'moment',
+  'increase',
+  'improve',
+  'deliver',
+]);
+
+function tokenize(str: string): string[] {
+  return str
+    .toLowerCase()
+    .split(/[\s\-\/—≥≤@#.,:;!?()[\]{}'"]+/)
+    .filter((w) => w.length >= 4 && !STOPWORDS.has(w) && !/^\d+$/.test(w));
+}
+
+function loadWigKeywords(mainFolder: string): string[] {
+  const wigPath = path.join(
+    process.cwd(),
+    'groups',
+    mainFolder,
+    '4dx',
+    'wig.json',
+  );
+  if (!fs.existsSync(wigPath)) return [];
+  try {
+    const data = JSON.parse(fs.readFileSync(wigPath, 'utf-8'));
+    const keywords = new Set<string>();
+    for (const wig of data.wigs || []) {
+      for (const token of tokenize(wig.name)) keywords.add(token);
+      for (const lead of wig.leads || []) {
+        for (const token of tokenize(lead.name)) keywords.add(token);
+      }
+    }
+    return Array.from(keywords);
+  } catch {
+    return [];
+  }
+}
+
+function isWigRelated(text: string, keywords: string[]): boolean {
+  if (keywords.length === 0) return false;
+  const lower = text.toLowerCase();
+  return keywords.some((k) => lower.includes(k));
+}
 
 // Lark text messages support up to 30,000 characters per message
 const MAX_MESSAGE_LENGTH = 30000;
@@ -110,16 +193,29 @@ export class LarkChannel implements Channel {
     }, this.pollIntervalMs);
   }
 
+  private getMainGroup(): { jid: string; group: RegisteredGroup } | null {
+    const groups = this.opts.registeredGroups();
+    const entry = Object.entries(groups).find(([, g]) => g.isMain === true);
+    return entry ? { jid: entry[0], group: entry[1] } : null;
+  }
+
   private async pollAllGroups(): Promise<void> {
     const groups = this.opts.registeredGroups();
     const larkJids = Object.keys(groups).filter((j) => j.startsWith('lark:'));
     if (larkJids.length === 0) return;
+    const main = this.getMainGroup();
+    const wigKeywords = main ? loadWigKeywords(main.group.folder) : [];
     logger.debug({ count: larkJids.length }, 'Lark polling groups');
-    await Promise.all(larkJids.map((jid) => this.fetchGroupMessages(jid)));
+    await Promise.all(
+      larkJids.map((jid) => this.fetchGroupMessages(jid, wigKeywords)),
+    );
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private async fetchGroupMessages(chatJid: string): Promise<void> {
+  private async fetchGroupMessages(
+    chatJid: string,
+    wigKeywords: string[],
+  ): Promise<void> {
     if (!this.client) return;
     const chatId = chatJid.replace(/^lark:/, '');
 
@@ -164,7 +260,7 @@ export class LarkChannel implements Channel {
         const createMs = parseInt(item.create_time || '0');
         if (createMs > newestMs) newestMs = createMs;
 
-        await this.processItem(item, chatId, chatJid);
+        await this.processItem(item, chatId, chatJid, wigKeywords);
         fetched++;
       }
     } while (pageToken);
@@ -182,6 +278,7 @@ export class LarkChannel implements Channel {
     item: any,
     chatId: string,
     chatJid: string,
+    wigKeywords: string[],
   ): Promise<void> {
     const senderId: string = item.sender?.id || '';
     const senderName: string = item.sender?.id || senderId || 'Unknown';
@@ -212,6 +309,15 @@ export class LarkChannel implements Channel {
       const hasBotMention = mentions.some((m) => !m.id?.user_id);
       if (hasBotMention && !TRIGGER_PATTERN.test(content)) {
         content = `@${ASSISTANT_NAME} ${content}`;
+      }
+
+      // Skip messages that neither mention the bot nor match WIG topics
+      const isWig = isWigRelated(content, wigKeywords);
+      if (!hasBotMention && !isWig) return;
+
+      // Prepend trigger for proactive WIG alerts
+      if (isWig && !hasBotMention) {
+        content = `@${ASSISTANT_NAME} [WIG] ${content}`;
       }
     }
 
