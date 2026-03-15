@@ -9,6 +9,13 @@ import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
+  hasOpenSignalForKey,
+  isResolutionContent,
+  loadWigKeywordMap,
+  tagWigIds,
+  upsertWigSignal,
+} from '../wig-signals.js';
+import {
   Channel,
   OnChatMetadata,
   OnInboundMessage,
@@ -204,10 +211,14 @@ export class LarkChannel implements Channel {
     const larkJids = Object.keys(groups).filter((j) => j.startsWith('lark:'));
     if (larkJids.length === 0) return;
     const main = this.getMainGroup();
+    const mainFolder = main?.group.folder ?? '';
     const wigKeywords = main ? loadWigKeywords(main.group.folder) : [];
+    const wigKeywordMap = main ? loadWigKeywordMap(main.group.folder) : [];
     logger.debug({ count: larkJids.length }, 'Lark polling groups');
     await Promise.all(
-      larkJids.map((jid) => this.fetchGroupMessages(jid, wigKeywords)),
+      larkJids.map((jid) =>
+        this.fetchGroupMessages(jid, wigKeywords, wigKeywordMap, mainFolder),
+      ),
     );
   }
 
@@ -215,6 +226,8 @@ export class LarkChannel implements Channel {
   private async fetchGroupMessages(
     chatJid: string,
     wigKeywords: string[],
+    wigKeywordMap: { id: number; name: string; tokens: string[] }[],
+    mainFolder: string,
   ): Promise<void> {
     if (!this.client) return;
     const chatId = chatJid.replace(/^lark:/, '');
@@ -260,7 +273,14 @@ export class LarkChannel implements Channel {
         const createMs = parseInt(item.create_time || '0');
         if (createMs > newestMs) newestMs = createMs;
 
-        await this.processItem(item, chatId, chatJid, wigKeywords);
+        await this.processItem(
+          item,
+          chatId,
+          chatJid,
+          wigKeywords,
+          wigKeywordMap,
+          mainFolder,
+        );
         fetched++;
       }
     } while (pageToken);
@@ -279,6 +299,8 @@ export class LarkChannel implements Channel {
     chatId: string,
     chatJid: string,
     wigKeywords: string[],
+    wigKeywordMap: { id: number; name: string; tokens: string[] }[],
+    mainFolder: string,
   ): Promise<void> {
     const senderId: string = item.sender?.id || '';
     const senderName: string = item.sender?.id || senderId || 'Unknown';
@@ -311,9 +333,36 @@ export class LarkChannel implements Channel {
         content = `@${ASSISTANT_NAME} ${content}`;
       }
 
-      // Skip messages that neither mention the bot nor match WIG topics
+      // Skip messages that neither mention the bot nor match WIG topics,
+      // unless this is a resolution follow-up for an existing open signal
       const isWig = isWigRelated(content, wigKeywords);
-      if (!hasBotMention && !isWig) return;
+      const rawContent = content;
+      const signalsPath = path.join(
+        process.cwd(),
+        'groups',
+        mainFolder,
+        '4dx',
+        'wig-signals.json',
+      );
+      const isResolution =
+        !isWig &&
+        isResolutionContent(content) &&
+        hasOpenSignalForKey(chatJid, signalsPath);
+
+      if (!hasBotMention && !isWig && !isResolution) return;
+
+      // Upsert WIG signal for WIG-related messages and resolutions
+      if ((isWig || isResolution) && mainFolder) {
+        upsertWigSignal({
+          channel: 'lark',
+          correlationKey: chatJid,
+          wigIds: isWig ? tagWigIds(rawContent, wigKeywordMap) : [],
+          sender: senderName,
+          snippet: rawContent.slice(0, 200),
+          timestamp,
+          groupFolder: mainFolder,
+        });
+      }
 
       // Prepend trigger for proactive WIG alerts
       if (isWig && !hasBotMention) {

@@ -9,6 +9,12 @@ import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import { DIGEST_INTERVAL_MS, DIGEST_LOOKBACK_HOURS } from '../config.js';
 import {
+  hasOpenSignalForKey,
+  loadWigKeywordMap,
+  tagWigIds,
+  upsertWigSignal,
+} from '../wig-signals.js';
+import {
   Channel,
   OnChatMetadata,
   OnInboundMessage,
@@ -339,6 +345,7 @@ export class GmailChannel implements Channel {
     const main = this.getMainGroup();
     const vipNames = main ? loadVipNames(main.group.folder) : [];
     const wigKeywords = main ? loadWigKeywords(main.group.folder) : [];
+    const wigKeywordMap = main ? loadWigKeywordMap(main.group.folder) : [];
 
     try {
       const afterEpoch = Math.floor(
@@ -360,6 +367,7 @@ export class GmailChannel implements Channel {
             stub.id,
             vipNames,
             wigKeywords,
+            wigKeywordMap,
             main,
           );
           if (changed) metaChanged = true;
@@ -392,6 +400,7 @@ export class GmailChannel implements Channel {
     messageId: string,
     vipNames: string[],
     wigKeywords: string[],
+    wigKeywordMap: { id: number; name: string; tokens: string[] }[],
     main: { jid: string; group: RegisteredGroup } | null,
   ): Promise<boolean> {
     if (!this.gmail) return false;
@@ -443,6 +452,33 @@ export class GmailChannel implements Channel {
       isVipSender(senderName, vipNames) ||
       isUrgentSubject(subject) ||
       isWigRelated(`${subject} ${snippet}`, wigKeywords);
+
+    // Upsert WIG signal for WIG-related emails and resolution follow-ups
+    if (main) {
+      const combinedText = `${subject} ${snippet}`;
+      const wigRelated = isWigRelated(combinedText, wigKeywords);
+      const correlationKey = `gmail:${threadId}`;
+      const signalsPath = path.join(
+        'groups',
+        main.group.folder,
+        '4dx',
+        'wig-signals.json',
+      );
+      const hasOpen = hasOpenSignalForKey(correlationKey, signalsPath);
+
+      if (wigRelated || hasOpen) {
+        const wigIds = wigRelated ? tagWigIds(combinedText, wigKeywordMap) : [];
+        upsertWigSignal({
+          channel: 'gmail',
+          correlationKey,
+          wigIds,
+          sender: senderName,
+          snippet: `${subject}: ${snippet}`.slice(0, 200),
+          timestamp,
+          groupFolder: main.group.folder,
+        });
+      }
+    }
 
     if (urgent && main) {
       await this.deliverEmailToBrain(

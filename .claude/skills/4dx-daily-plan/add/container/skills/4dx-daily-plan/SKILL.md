@@ -12,9 +12,13 @@ Read `4dx/wig.json` and `4dx/scoreboard.json` from the group workspace:
 ```bash
 cat /workspace/group/4dx/wig.json 2>/dev/null || echo "NO_CONFIG"
 cat /workspace/group/4dx/scoreboard.json 2>/dev/null || echo "NO_STATE"
+cat /workspace/group/4dx/wig-signals.json 2>/dev/null || echo "NO_SIGNALS"
 ```
 
 Use these files as the authoritative source for WIG definitions, scoreboard, and carry_forward.
+`wig-signals.json` provides real-time WIG blockers and resolutions — use it in Step 2 and Step 3 instead of hallucinating Whirlwind content.
+
+If `wig-signals.json` returns `NO_SIGNALS`: proceed without signals — Whirlwind Watch falls back to inference.
 Do NOT re-derive this information from prose.
 
 If `wig.json` returns `NO_CONFIG`: stop and reply — "⚠️ WIG configuration not found. Create `4dx/wig.json` in your group workspace before running the daily plan."
@@ -67,6 +71,8 @@ Use the WIG definitions from `4dx/wig.json` (loaded in Storage Protocol above). 
 | Lag measure `lag_status = "at_risk"` or `"losing"` | Elevate priority. |
 | `lead_streak` = 0 (missed last session) | Elevate priority. |
 | `weekly_done` = 0 and it's mid-week | Elevate to prevent stall. |
+| WIG id in `wig-signals.json` with `status: "open"` | Elevate priority — active blocker. |
+| WIG id appears in 2+ open signals | Strong candidate — repeated blocker. |
 
 > **Rule:** If a WIG has a `deadline` and it is ≤ 7 days away, always auto-select it regardless of rotation logic.
 
@@ -117,9 +123,14 @@ Output the plan in this exact structure:
 
 #### ⚠️ Whirlwind Watch
 
-| Blocker / Risk | Unblock By |
-|---|---|
-| [Blocker description] | [Action to unblock] |
+Populate from `wig-signals.json` (loaded in Storage Protocol):
+- For each signal with `status: "open"` AND `first_ts` within last 7 days: add one row — `snippet` → Blocker description, `channel + sender` → Source, `first_ts` → Raised date.
+- For each signal with `status: "resolved"` AND `updated_ts` = today: add a ✅ row — `resolution_snippet` → Unblocked note.
+- If no signals: infer from context or omit the table.
+
+| Blocker / Risk | Source | Raised | Unblock By |
+|---|---|---|---|
+| [snippet from open signal or inferred blocker] | [channel — sender] | [first_ts date] | [Action to unblock] |
 
 ---
 
