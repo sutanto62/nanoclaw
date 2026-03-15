@@ -10,7 +10,9 @@ const factoryRef = vi.hoisted(() => ({
 const mockMessageList = vi.hoisted(() =>
   vi.fn().mockResolvedValue({ data: { items: [], page_token: undefined } }),
 );
-const mockMessageCreate = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const mockMessageCreate = vi.hoisted(() =>
+  vi.fn().mockResolvedValue(undefined),
+);
 const mockChatGet = vi.hoisted(() =>
   vi.fn().mockResolvedValue({ data: { name: 'Mock Chat Name' } }),
 );
@@ -96,15 +98,17 @@ type MentionEntry = {
 };
 
 // Build a mock im.message.list item (poll mode format).
-function makeItem(overrides: {
-  msgType?: string;
-  content?: string;
-  senderId?: string;
-  senderType?: string;
-  messageId?: string;
-  createTime?: string;
-  mentions?: MentionEntry[];
-} = {}) {
+function makeItem(
+  overrides: {
+    msgType?: string;
+    content?: string;
+    senderId?: string;
+    senderType?: string;
+    messageId?: string;
+    createTime?: string;
+    mentions?: MentionEntry[];
+  } = {},
+) {
   const content =
     'content' in overrides
       ? overrides.content
@@ -290,7 +294,10 @@ describe('LarkChannel', () => {
           },
         })
         .mockResolvedValueOnce({
-          data: { items: [makeItem({ messageId: 'msg2' })], page_token: undefined },
+          data: {
+            items: [makeItem({ messageId: 'msg2' })],
+            page_token: undefined,
+          },
         });
 
       await channel.connect();
@@ -358,7 +365,9 @@ describe('LarkChannel', () => {
     it('converts create_time (ms) to ISO timestamp', async () => {
       const opts = createTestOpts();
       const channel = new LarkChannel(opts);
-      await connectWithItems(channel, [makeItem({ createTime: '1704067200000' })]);
+      await connectWithItems(channel, [
+        makeItem({ createTime: '1704067200000' }),
+      ]);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
         'lark:oc_abc123',
@@ -467,7 +476,9 @@ describe('LarkChannel', () => {
       await connectWithItems(channel, [
         makeItem({
           content: JSON.stringify({ text: '@BrainBot what time is it?' }),
-          mentions: [{ key: '@_user_1', id: { open_id: 'ou_bot' }, name: 'Brain Bot' }],
+          mentions: [
+            { key: '@_user_1', id: { open_id: 'ou_bot' }, name: 'Brain Bot' },
+          ],
         }),
       ]);
 
@@ -507,7 +518,9 @@ describe('LarkChannel', () => {
       await connectWithItems(channel, [
         makeItem({
           content: JSON.stringify({ text: '@Brain what is the time?' }),
-          mentions: [{ key: '@_user_1', id: { open_id: 'ou_bot' }, name: 'Brain Bot' }],
+          mentions: [
+            { key: '@_user_1', id: { open_id: 'ou_bot' }, name: 'Brain Bot' },
+          ],
         }),
       ]);
 
@@ -704,15 +717,21 @@ describe('LarkChannel', () => {
 
   describe('ownsJid', () => {
     it('owns lark: JIDs', () => {
-      expect(new LarkChannel(createTestOpts()).ownsJid('lark:oc_abc123')).toBe(true);
+      expect(new LarkChannel(createTestOpts()).ownsJid('lark:oc_abc123')).toBe(
+        true,
+      );
     });
 
     it('does not own Telegram JIDs', () => {
-      expect(new LarkChannel(createTestOpts()).ownsJid('tg:123456')).toBe(false);
+      expect(new LarkChannel(createTestOpts()).ownsJid('tg:123456')).toBe(
+        false,
+      );
     });
 
     it('does not own WhatsApp group JIDs', () => {
-      expect(new LarkChannel(createTestOpts()).ownsJid('12345@g.us')).toBe(false);
+      expect(new LarkChannel(createTestOpts()).ownsJid('12345@g.us')).toBe(
+        false,
+      );
     });
 
     it('does not own Slack JIDs', () => {
@@ -722,7 +741,9 @@ describe('LarkChannel', () => {
     });
 
     it('does not own unknown JID formats', () => {
-      expect(new LarkChannel(createTestOpts()).ownsJid('random-string')).toBe(false);
+      expect(new LarkChannel(createTestOpts()).ownsJid('random-string')).toBe(
+        false,
+      );
     });
   });
 

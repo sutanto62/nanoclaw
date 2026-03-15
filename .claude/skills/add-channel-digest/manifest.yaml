@@ -1,0 +1,14 @@
+skill: channel-digest
+version: 1.0.0
+description: "Host-side digest runner: pre-processes Lark/Gmail messages into cache files for M1/M7 skills"
+core_version: 0.1.0
+adds:
+  - src/digest-runner.ts
+modifies:
+  - src/config.ts
+  - src/index.ts
+env_additions:
+  - DIGEST_INTERVAL_MS   # optional, default 3600000 (1 hour)
+  - DIGEST_LOOKBACK_HOURS  # optional, default 24
+depends:
+  - add-lark   # or add-gmail — at least one channel needed

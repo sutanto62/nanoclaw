@@ -51,7 +51,10 @@ export class LarkChannel implements Channel {
   // Cache of chatId → display name to avoid repeated im.chat.get() calls
   private chatNameCache = new Map<string, string>();
 
-  constructor(opts: LarkChannelOpts, pollIntervalMs = DEFAULT_POLL_INTERVAL_MS) {
+  constructor(
+    opts: LarkChannelOpts,
+    pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
+  ) {
     this.opts = opts;
     this.pollIntervalMs = pollIntervalMs;
   }
@@ -69,9 +72,14 @@ export class LarkChannel implements Channel {
     // Seed per-group cursors from DB so startup only fetches new messages.
     this.seedLastFetchFromDb();
 
-    logger.info({ pollIntervalMs: this.pollIntervalMs }, 'Lark channel connected (poll mode)');
+    logger.info(
+      { pollIntervalMs: this.pollIntervalMs },
+      'Lark channel connected (poll mode)',
+    );
     console.log('\n  Lark bot: connected (poll mode)');
-    console.log(`  Polling every ${Math.round(this.pollIntervalMs / 60000)} min\n`);
+    console.log(
+      `  Polling every ${Math.round(this.pollIntervalMs / 60000)} min\n`,
+    );
 
     // Initial backfill on startup, then schedule recurring polls.
     await this.pollAllGroups();
@@ -86,7 +94,10 @@ export class LarkChannel implements Channel {
       const chatId = chat.jid.replace(/^lark:/, '');
       this.lastFetchMs.set(chatId, new Date(chat.last_message_time).getTime());
     }
-    logger.debug({ seeded: this.lastFetchMs.size }, 'Lark cursors seeded from DB');
+    logger.debug(
+      { seeded: this.lastFetchMs.size },
+      'Lark cursors seeded from DB',
+    );
   }
 
   private schedulePoll(): void {
@@ -167,7 +178,11 @@ export class LarkChannel implements Channel {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private async processItem(item: any, chatId: string, chatJid: string): Promise<void> {
+  private async processItem(
+    item: any,
+    chatId: string,
+    chatJid: string,
+  ): Promise<void> {
     const senderId: string = item.sender?.id || '';
     const senderName: string = item.sender?.id || senderId || 'Unknown';
     const timestamp = new Date(parseInt(item.create_time || '0')).toISOString();
@@ -184,14 +199,16 @@ export class LarkChannel implements Channel {
     } else {
       try {
         content =
-          (JSON.parse(item.body?.content || '{}') as { text?: string }).text || '';
+          (JSON.parse(item.body?.content || '{}') as { text?: string }).text ||
+          '';
       } catch {
         content = item.body?.content || '';
       }
 
       // Translate @bot mentions into TRIGGER_PATTERN format.
       // Bot/app mentions have no user_id, distinguishing them from @colleague.
-      const mentions: Array<{ id?: { user_id?: string } }> = item.mentions || [];
+      const mentions: Array<{ id?: { user_id?: string } }> =
+        item.mentions || [];
       const hasBotMention = mentions.some((m) => !m.id?.user_id);
       if (hasBotMention && !TRIGGER_PATTERN.test(content)) {
         content = `@${ASSISTANT_NAME} ${content}`;
@@ -287,7 +304,11 @@ export class LarkChannel implements Channel {
 registerChannel('lark', (opts: ChannelOpts) => {
   // Read from .env only — keeps secrets out of process.env so they
   // don't leak to child processes (containers/agents).
-  const env = readEnvFile(['LARK_APP_ID', 'LARK_APP_SECRET', 'LARK_POLL_INTERVAL_MS']);
+  const env = readEnvFile([
+    'LARK_APP_ID',
+    'LARK_APP_SECRET',
+    'LARK_POLL_INTERVAL_MS',
+  ]);
   if (!env.LARK_APP_ID || !env.LARK_APP_SECRET) {
     logger.warn('Lark: LARK_APP_ID or LARK_APP_SECRET not set, skipping');
     return null;

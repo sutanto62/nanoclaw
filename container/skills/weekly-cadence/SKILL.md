@@ -57,12 +57,12 @@ If it exists, read it and offer to continue editing or start fresh.
 ### 2A — Read 4DX structured data
 
 ```bash
-cat /workspace/group/4dx/state.json 2>/dev/null || echo "NO_STATE"
-cat /workspace/group/4dx/config.json 2>/dev/null || echo "NO_CONFIG"
+cat /workspace/group/4dx/scoreboard.json 2>/dev/null || echo "NO_STATE"
+cat /workspace/group/4dx/wig.json 2>/dev/null || echo "NO_CONFIG"
 ```
 
-From `state.json` extract: `scoreboard` (weekly_done, weekly_target, lead_streak, lag_current, lag_status per WIG), `carry_forward`.
-From `config.json` extract: WIG names, lag metrics, lead measure names and weekly_targets.
+From `scoreboard.json` extract: `scoreboard` (weekly_done, weekly_target, lead_streak, lag_current, lag_status per WIG), `carry_forward`.
+From `wig.json` extract: WIG names, lag metrics, lead measure names and weekly_targets.
 
 Use this structured data to pre-fill the Highlights, Lowlights, and Business Observations sections (WIG progress, streaks, lag measure movements).
 
@@ -246,9 +246,9 @@ import json
 from datetime import date
 
 # Write sessions/YYYY-WNN.json
-with open('/workspace/group/4dx/state.json') as f:
+with open('/workspace/group/4dx/scoreboard.json') as f:
     state = json.load(f)
-with open('/workspace/group/4dx/config.json') as f:
+with open('/workspace/group/4dx/wig.json') as f:
     config = json.load(f)
 
 # Build session record from current state
@@ -281,7 +281,7 @@ for wig_key in ['wig1', 'wig2', 'wig3', 'wig4']:
     state['scoreboard'][wig_key]['weekly_done'] = 0
 
 state['updated'] = date.today().isoformat()
-with open('/workspace/group/4dx/state.json', 'w') as f:
+with open('/workspace/group/4dx/scoreboard.json', 'w') as f:
     json.dump(state, f, indent=2)
 
 print(f'Session saved: {session_path}')
