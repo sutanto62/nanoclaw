@@ -12,9 +12,13 @@ Read `4dx/wig.json` and `4dx/scoreboard.json` from the group workspace:
 ```bash
 cat /workspace/group/4dx/wig.json 2>/dev/null || echo "NO_CONFIG"
 cat /workspace/group/4dx/scoreboard.json 2>/dev/null || echo "NO_STATE"
+cat /workspace/group/4dx/wig-signals.json 2>/dev/null || echo "NO_SIGNALS"
 ```
 
 Use these files as the authoritative source for WIG definitions, scoreboard, and carry_forward.
+`wig-signals.json` provides real-time WIG blockers and resolutions — use it in Step 2 and Step 3 instead of hallucinating Whirlwind content.
+
+If `wig-signals.json` returns `NO_SIGNALS`: proceed without signals — Whirlwind Watch falls back to inference.
 Do NOT re-derive this information from prose.
 
 If `wig.json` returns `NO_CONFIG`: stop and reply — "⚠️ WIG configuration not found. Create `4dx/wig.json` in your group workspace before running the daily plan."
@@ -67,6 +71,8 @@ Use the WIG definitions from `4dx/wig.json` (loaded in Storage Protocol above). 
 | Lag measure `lag_status = "at_risk"` or `"losing"` | Elevate priority. |
 | `lead_streak` = 0 (missed last session) | Elevate priority. |
 | `weekly_done` = 0 and it's mid-week | Elevate to prevent stall. |
+| WIG id in `wig-signals.json` with `status: "open"` | Elevate priority — active blocker. |
+| WIG id appears in 2+ open signals | Strong candidate — repeated blocker. |
 
 > **Rule:** If a WIG has a `deadline` and it is ≤ 7 days away, always auto-select it regardless of rotation logic.
 
@@ -74,79 +80,79 @@ Use the WIG definitions from `4dx/wig.json` (loaded in Storage Protocol above). 
 
 ## Step 3 — Generate the Daily Plan
 
-Output the plan in this exact structure:
+Output the plan in Telegram-compatible format. Use *bold* (single asterisk) for section headers. Do NOT use markdown tables — Telegram does not render them. Use structured lists instead.
 
 ---
 
-### 🗓️ Daily Plan — [Day, Date]
+🗓️ *Daily Plan — [Day, Date]*
 
-**Today's WIG Focus:**
-- WIG [X] — [Name] `[Area]`: [description as lag context] — [1-line urgency rationale]
-- WIG [Y] — [Name] `[Area]`: [description as lag context] — [1-line urgency rationale]
-
----
-
-#### 🕐 Daily Time Box
-
-| Time | Focus Type | Activity | 4DX Connection |
-|---|---|---|---|
-| 08:30–10:00 | 🎯 WIG (Deep Work) | [action — no Slack, no email] | 🎯 Focus + 🔧 Leverage — WIG [X] Lead Measure |
-| 10:30 | ⭐ Northstar Metric | [action] | 📊 Visual — Scoreboard: [lag measure check] |
-| 11:30 | 🌪️ Whirlwind | [action] | — |
-| 12:30 | — | Lunch | — |
-| 13:30 | 🌪️ Whirlwind | [action] | — |
-| 14:30 | 🎯 WIG | [action] | 🔧 Leverage — Lead Measure: [specific lead, WIG Y] |
-| 15:30 | ⭐ Northstar Metric | [action] | 📊 Visual — Scoreboard: [lag measure check] |
-| 16:30 | 📈 Accountability | Update scoreboard + review lead measures | 🤝 Accountability — Score the day |
-| 17:30 | 📈 Accountability | EOD wrap-up + commit tomorrow's 08:30 WIG task | 🤝 Accountability — Lock tomorrow's offense |
-
-> **Focus types:** 🎯 WIG = deep work on WIGs · 🌪️ Whirlwind = meetings, ops, reactive · ⭐ Northstar Metric = lag measures & dashboards · 📈 Accountability = score + commit
+*Today's WIG Focus:*
+• WIG [X] — [Name] ([Area]): [description as lag context] — [1-line urgency rationale]
+• WIG [Y] — [Name] ([Area]): [description as lag context] — [1-line urgency rationale]
 
 ---
 
-#### ✅ Lead Measure Commitments
+🕐 *Daily Time Box*
 
-| WIG | Action | Owner | Due |
-|---|---|---|---|
-| WIG [X] — [Name] | [Specific action] | Cayadi | EOD / [time] |
-| WIG [X] — [Name] | [Specific action] | Cayadi | EOD / [time] |
-| WIG [Y] — [Name] | [Specific action] | Cayadi | EOD / [time] |
-| WIG [Y] — [Name] | [Specific action] | Cayadi | EOD / [time] |
+`08:30` 🎯 WIG Deep Work — [action, no Slack/email] _([WIG X] Lead Measure)_
+`10:30` ⭐ Northstar — [action] _(Scoreboard: [lag measure check])_
+`11:30` 🌪️ Whirlwind — [action]
+`12:30` 🍽️ Lunch
+`13:30` 🌪️ Whirlwind — [action]
+`14:30` 🎯 WIG — [action] _(Lead Measure: [WIG Y])_
+`15:30` ⭐ Northstar — [action] _(Scoreboard: [lag measure check])_
+`16:30` 📈 Update scoreboard + review lead measures
+`17:30` 📈 EOD wrap-up + lock tomorrow's 08:30 WIG task
 
----
-
-#### ⚠️ Whirlwind Watch
-
-| Blocker / Risk | Unblock By |
-|---|---|
-| [Blocker description] | [Action to unblock] |
+_🎯 WIG = deep work · 🌪️ Whirlwind = meetings/ops/reactive · ⭐ Northstar = lag measures · 📈 Accountability = score + commit_
 
 ---
 
-#### 📊 4DX Scoreboard
+✅ *Lead Measure Commitments*
 
-| WIG | Quarterly | This Week |
-|---|---|---|
-| [one row per WIG from wig.json: WIG [id] — [name] `[area]`] | 🟢/🟡/🔴 | ✅/❌ |
+🎯 WIG [X] — [Name]
+• [Specific action] — Cayadi · EOD/[time]
+• [Specific action] — Cayadi · EOD/[time]
 
-> 🟢 On track · 🟡 At risk · 🔴 Behind · ✅ Lead measures hit this week · ❌ Missed
-
----
-
-#### 🏆 Binary Win Check
-
-> Answer before closing the day.
-
-| Question | Yes / No |
-|---|---|
-| Did I protect the 08:30–10:00 WIG block? (no Slack, no email) | |
-| Did I move at least 1 Lead Measure today? | |
-
-> Both Yes = 🏆 WIN. Either No = ❌ LOSS — you were a passenger in your own schedule.
+🎯 WIG [Y] — [Name]
+• [Specific action] — Cayadi · EOD/[time]
+• [Specific action] — Cayadi · EOD/[time]
 
 ---
 
-*Plan generated: [timestamp] | Module: M1 Daily Plan*
+⚠️ *Whirlwind Watch*
+
+Populate from `wig-signals.json` (loaded in Storage Protocol):
+- For each signal with `status: "open"` AND `first_ts` within last 7 days: one bullet — `snippet` as blocker, `channel + sender` as source, `first_ts` as raised date.
+- For each signal with `status: "resolved"` AND `updated_ts` = today: one ✅ bullet with `resolution_snippet`.
+- If no signals: write "_No open blockers_".
+
+• [Blocker / Risk] _(Source: [channel — sender] · Raised: [first_ts date])_ → [Action to unblock]
+✅ [Resolution note] _(resolved today)_
+
+_No open blockers_ — if no active blockers
+
+---
+
+📊 *4DX Scoreboard*
+
+• WIG [X] — [Name] ([Area]) | Q: 🟢/🟡/🔴 | Week: ✅/❌
+• WIG [Y] — [Name] ([Area]) | Q: 🟢/🟡/🔴 | Week: ✅/❌
+
+_🟢 On track · 🟡 At risk · 🔴 Behind · ✅ Lead measures hit this week · ❌ Missed_
+
+---
+
+🏆 *Binary Win Check*
+
+☐ Protected 08:30–10:00 WIG block? (no Slack, no email)
+☐ Moved ≥ 1 Lead Measure today?
+
+_Both Yes = 🏆 WIN · Either No = ❌ LOSS — you were a passenger in your own schedule._
+
+---
+
+_Plan generated: [timestamp] | Module: M1 Daily Plan_
 
 ---
 
@@ -159,12 +165,12 @@ Output the plan in this exact structure:
 
 ## Time Box Rules
 
-- Slots: 08:30–17:30. Lunch fixed at 12:30. EOD wrap at 17:30.
-- WIG deep work: 08:30–10:00 = one continuous block. No interruptions. This is offense.
-- Afternoon WIG: 14:30 — one focused slot for WIG Y lead measure.
-- Northstar Metric: 10:30, 15:30 — review lag measures, dashboards, data.
+- Slots: 08:00–17:00. Lunch fixed at 12:30. EOD wrap at 17:00.
+- WIG deep work: 08:00–09:30 = one continuous block. No interruptions. This is offense.
+- Afternoon WIG: 14:00 — one focused slot for WIG Y lead measure.
+- Northstar Metric: 10:00, 15:00 — review lag measures, dashboards, data.
 - Whirlwind: 11:30, 13:30 — meetings, ops, reactive tasks.
-- Accountability: 16:30 (scoreboard update) + 17:30 (EOD commit + tomorrow's 08:30 task locked).
+- Accountability: 16:00 (scoreboard update) + 17:00 (EOD commit + tomorrow's 08:00 task locked).
 - Never leave activity column blank — infer from context if not explicit.
 
 ---

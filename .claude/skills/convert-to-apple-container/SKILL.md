@@ -154,6 +154,12 @@ container system start
 container system status
 ```
 
+**Start Apple Container at login (LaunchAgent):**
+```bash
+./scripts/install-apple-container-launchagent.sh
+```
+This installs `~/Library/LaunchAgents/com.nanoclaw.apple-container-system.plist` and loads it so `container system start` runs at login. To remove: `launchctl unload ~/Library/LaunchAgents/com.nanoclaw.apple-container-system.plist`
+
 **Image build fails:**
 ```bash
 # Clean rebuild — Apple Container caches aggressively

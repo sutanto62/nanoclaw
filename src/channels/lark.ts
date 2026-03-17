@@ -140,6 +140,8 @@ export class LarkChannel implements Channel {
   private lastFetchMs = new Map<string, number>();
   // Cache of chatId → display name to avoid repeated im.chat.get() calls
   private chatNameCache = new Map<string, string>();
+  // Bot's own open_id — fetched at connect time for precise mention detection
+  private botOpenId: string | null = null;
 
   constructor(
     opts: LarkChannelOpts,
@@ -158,6 +160,28 @@ export class LarkChannel implements Channel {
     const domain = env.LARK_DOMAIN === 'feishu' ? Domain.Feishu : Domain.Lark;
 
     this.client = new Client({ appId, appSecret, domain });
+
+    // Fetch the bot's own open_id so we can precisely detect @bot mentions
+    // rather than relying on absence of user_id (which can be absent for
+    // regular users too, causing false-positive triggers).
+    try {
+      const botRes = await this.client.request<{
+        bot?: { open_id?: string };
+      }>({
+        method: 'GET',
+        url: '/open-apis/bot/v3/info',
+        data: {},
+      });
+      this.botOpenId = botRes.bot?.open_id ?? null;
+      if (this.botOpenId) {
+        logger.info({ botOpenId: this.botOpenId }, 'Lark bot open_id resolved');
+      }
+    } catch (err) {
+      logger.warn(
+        { err },
+        'Lark: failed to fetch bot open_id, falling back to name-based mention detection',
+      );
+    }
 
     // Seed per-group cursors from DB so startup only fetches new messages.
     this.seedLastFetchFromDb();
@@ -325,10 +349,22 @@ export class LarkChannel implements Channel {
       }
 
       // Translate @bot mentions into TRIGGER_PATTERN format.
-      // Bot/app mentions have no user_id, distinguishing them from @colleague.
-      const mentions: Array<{ id?: { user_id?: string } }> =
-        item.mentions || [];
-      const hasBotMention = mentions.some((m) => !m.id?.user_id);
+      // Use the bot's open_id for precise detection. Fall back to name match
+      // if open_id wasn't resolved at startup. Avoid the old heuristic of
+      // checking !user_id, which falsely matched regular user mentions when
+      // Lark omits user_id from the mention object.
+      // Someone with Lark user name 'Brain' and has no user_id could be considered as bot
+      const mentions: Array<{
+        id?: { user_id?: string; open_id?: string };
+        name?: string;
+      }> = item.mentions || [];
+      const hasBotMention = this.botOpenId
+        ? mentions.some((m) => m.id?.open_id === this.botOpenId)
+        : mentions.some(
+            (m) =>
+              !m.id?.user_id &&
+              m.name?.toLowerCase() === ASSISTANT_NAME.toLowerCase(),
+          );
       if (hasBotMention && !TRIGGER_PATTERN.test(content)) {
         content = `@${ASSISTANT_NAME} ${content}`;
       }
