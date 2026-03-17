@@ -1,6 +1,24 @@
 ---
 name: 4dx-daily-plan
-description: Morning 4DX daily plan (M1) and surface 2 of most urgent WIGs today, commit to Lead Measure actions, and flag whirlwind blockers. Trigger on: "daily plan", "morning plan", "plan my day", "M1", "today plan", "what should I focus on today", or start of working day.
+description: Morning 4DX daily plan (M1) and surface 2 of most urgent WIGs today, commit to Lead Measure actions, and flag whirlwind blockers. Trigger on: "daily plan", "morning plan", "plan my day", "M1", "today plan", "what should I focus on today", or start of working day. Also handles commitment mutations: "add commitment", "update M1", "remove commitment", etc.
+---
+
+## Intent Detection
+
+Detect intent before doing anything else:
+
+**INTENT A — Generate Morning Plan**
+Triggers: "daily plan", "morning plan", "plan my day", "M1", "today plan",
+          "what should I focus on today"
+→ Execute Steps 1–4 (existing flow).
+
+**INTENT B — Mutate Commitments**
+Triggers: message contains "add commitment", "add M1", "update M1",
+          "update commitment", "new commitment", "change commitment",
+          "remove commitment", "delete M1", "log commitment",
+          or free-form text with "WIG [N]" + an action verb.
+→ Execute Commitment Mutation Flow (below). Skip Steps 1–4.
+
 ---
 
 ## Storage Protocol
@@ -82,9 +100,11 @@ Use the WIG definitions from `4dx/wig.json` (loaded in Storage Protocol above). 
 
 Output the plan in Telegram-compatible format. Use *bold* (single asterisk) for section headers. Do NOT use markdown tables — Telegram does not render them. Use structured lists instead.
 
+**IMPORTANT: Output ALL sections below in full. Do NOT skip, abbreviate, or omit any section — especially the Daily Time Box.**
+
 ---
 
-🗓️ *Daily Plan — [Day, Date]*
+*🗓️ Daily Plan — [Day, Date]*
 
 *Today's WIG Focus:*
 • WIG [X] — [Name] ([Area]): [description as lag context] — [1-line urgency rationale]
@@ -94,15 +114,15 @@ Output the plan in Telegram-compatible format. Use *bold* (single asterisk) for 
 
 🕐 *Daily Time Box*
 
-`08:30` 🎯 WIG Deep Work — [action, no Slack/email] _([WIG X] Lead Measure)_
-`10:30` ⭐ Northstar — [action] _(Scoreboard: [lag measure check])_
+`08:00` 🎯 WIG Deep Work — [action, no Slack/email] _([WIG X] Lead Measure)_
+`10:00` ⭐ Northstar — [action] _(Scoreboard: [lag measure check])_
 `11:30` 🌪️ Whirlwind — [action]
 `12:30` 🍽️ Lunch
 `13:30` 🌪️ Whirlwind — [action]
-`14:30` 🎯 WIG — [action] _(Lead Measure: [WIG Y])_
-`15:30` ⭐ Northstar — [action] _(Scoreboard: [lag measure check])_
-`16:30` 📈 Update scoreboard + review lead measures
-`17:30` 📈 EOD wrap-up + lock tomorrow's 08:30 WIG task
+`14:00` 🎯 WIG — [action] _(Lead Measure: [WIG Y])_
+`15:00` ⭐ Northstar — [action] _(Scoreboard: [lag measure check])_
+`16:00` 📈 Update scoreboard + review lead measures
+`17:00` 📈 EOD wrap-up + lock tomorrow's 08:00 WIG task
 
 _🎯 WIG = deep work · 🌪️ Whirlwind = meetings/ops/reactive · ⭐ Northstar = lag measures · 📈 Accountability = score + commit_
 
@@ -145,7 +165,7 @@ _🟢 On track · 🟡 At risk · 🔴 Behind · ✅ Lead measures hit this week
 
 🏆 *Binary Win Check*
 
-☐ Protected 08:30–10:00 WIG block? (no Slack, no email)
+☐ Protected 08:00–09:30 WIG block? (no Slack, no email)
 ☐ Moved ≥ 1 Lead Measure today?
 
 _Both Yes = 🏆 WIN · Either No = ❌ LOSS — you were a passenger in your own schedule._
@@ -215,3 +235,122 @@ print('scoreboard.json updated')
 ```
 
 Confirm: `Daily plan saved: daily/${DATE_ISO}.md | scoreboard.json updated`
+
+---
+
+## Commitment Mutation Flow
+
+Execute this flow when **INTENT B** is detected. Skip Steps 1–4.
+
+### CM-1 — Load state
+
+```bash
+cat /workspace/group/4dx/wig.json 2>/dev/null || echo "NO_CONFIG"
+cat /workspace/group/4dx/scoreboard.json 2>/dev/null || echo "NO_STATE"
+```
+
+### CM-2 — Parse intent from message
+
+Extract:
+- **operation**: `add` | `update` | `remove`
+- **wig_id**: integer. Match by number ("WIG 2") or name alias from `wig.json`
+- **lead_measure**: match against `wig.json leads[].name`; fall back to user's literal text
+- **action**: specific commitment text
+- **due**: parse time expressions ("EOD", "15:00", "end of day"); default to `"EOD"`
+
+### CM-3 — Validate
+
+| Case | Response |
+|------|----------|
+| WIG ID not in wig.json | List valid WIGs, ask to clarify |
+| `today.date` ≠ today | Block write: "Run M1 first to initialize today's session." |
+| Duplicate action on same WIG (add) | Ask: "This action already exists for WIG N. Update or add as new?" |
+| `remove` — no match | List current commitments numbered 1–N, ask which to remove |
+| WIG not in `today.wig_focus` | Allow write, note: "WIG N isn't in today's focus (WIGs X, Y). Added anyway." |
+
+### CM-4 — Write back
+
+Build and run an inline Python script with the real operation substituted:
+
+```python
+import json
+from datetime import date
+
+today = date.today().isoformat()
+
+with open('/workspace/group/4dx/scoreboard.json') as f:
+    state = json.load(f)
+
+if state.get('today', {}).get('date') != today:
+    print('DATE_MISMATCH')
+else:
+    commitments = state['today'].get('m1_commitments') or []
+
+    # ADD: append new entry
+    # new_entry = {'wig': WIG_ID, 'lead_measure': 'LEAD', 'action': 'ACTION', 'due': 'DUE'}
+    # commitments.append(new_entry)
+
+    # UPDATE: find by wig + approximate action match, replace fields
+    # for c in commitments:
+    #     if c['wig'] == WIG_ID and 'KEYWORD' in c['action'].lower():
+    #         c['action'] = 'NEW_ACTION'
+    #         c['due'] = 'NEW_DUE'
+    #         break
+
+    # REMOVE: filter out matched entry
+    # commitments = [c for c in commitments if not (c['wig'] == WIG_ID and 'KEYWORD' in c['action'].lower())]
+
+    state['today']['m1_commitments'] = commitments
+    state['updated'] = today
+
+    with open('/workspace/group/4dx/scoreboard.json', 'w') as f:
+        json.dump(state, f, indent=2)
+    print('COMMIT_DONE')
+```
+
+If output is `DATE_MISMATCH`: reply "Run M1 first to initialize today's session."
+
+### CM-5 — Confirm to user
+
+Build the commitments table using this Python snippet (run inline after CM-4):
+
+```python
+from datetime import date
+
+def fmt_table(commitments):
+    date_label = date.today().strftime('%B %Y')
+    sep = '─' * 52
+    lines = [
+        f"Commitments — {date_label}",
+        '',
+    ]
+    for c in commitments:
+        action = c['action'][:35] + '…' if len(c['action']) > 35 else c['action']
+        lines.append(f"WIG {c['wig']}  {action:<37}{c['due']:>5}")
+    total = len(commitments)
+    lines.append(sep)
+    lines.append(f"Total  {total} commitment{'s' if total != 1 else ''}")
+    return '\n'.join(lines)
+```
+
+Wrap the result in triple backticks when printing to the reply.
+
+For **add**:
+
+✅ Commitment added to today's M1:
+
+🎯 WIG [N] — [Name]
+• [Action] — [due]
+
+```
+Commitments — [Month Year]
+
+WIG X  [action]                              [due]
+WIG Y  [action]                              [due]
+────────────────────────────────────────────────────
+Total  [N] commitments
+```
+
+For **update**: show the changed row (before → after), then the full updated table wrapped in triple backticks.
+
+For **remove**: confirm which entry was removed by name, then show remaining commitments in the same table format wrapped in triple backticks.
