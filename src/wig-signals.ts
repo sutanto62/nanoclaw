@@ -35,6 +35,7 @@ export interface WigSignal {
   status: 'open' | 'resolved';
   snippet: string;
   resolution_snippet: string | null;
+  source_url?: string;
 }
 
 interface WigSignalsFile {
@@ -50,6 +51,7 @@ export interface UpsertOpts {
   snippet: string;
   timestamp: string;
   groupFolder: string;
+  sourceUrl?: string;
 }
 
 function getSignalsPath(groupFolder: string): string {
@@ -94,94 +96,6 @@ export function hasOpenSignalForKey(
   }
 }
 
-const STOPWORDS = new Set([
-  'and',
-  'the',
-  'for',
-  'from',
-  'with',
-  'this',
-  'that',
-  'have',
-  'been',
-  'will',
-  'when',
-  'date',
-  'grow',
-  'into',
-  'over',
-  'live',
-  'goal',
-  'plan',
-  'per',
-  'day',
-  'week',
-  'mid',
-  'top',
-  'held',
-  'done',
-  'sent',
-  'session',
-  'count',
-  'score',
-  'point',
-  'points',
-  'resolved',
-  'shipped',
-  'reviewed',
-  'completed',
-  'triaged',
-  'moment',
-  'increase',
-  'improve',
-  'deliver',
-]);
-
-function tokenize(str: string): string[] {
-  return str
-    .toLowerCase()
-    .split(/[\s\-\/—≥≤@#.,:;!?()[\]{}'"]+/)
-    .filter((w) => w.length >= 4 && !STOPWORDS.has(w) && !/^\d+$/.test(w));
-}
-
-export function loadWigKeywordMap(
-  mainFolder: string,
-): { id: number; name: string; tokens: string[] }[] {
-  const wigPath = path.join(
-    process.cwd(),
-    'groups',
-    mainFolder,
-    '4dx',
-    'wig.json',
-  );
-  if (!fs.existsSync(wigPath)) return [];
-  try {
-    const data = JSON.parse(fs.readFileSync(wigPath, 'utf-8'));
-    return (data.wigs || []).map(
-      (wig: { id: number; name: string; leads?: { name: string }[] }) => {
-        const tokens = new Set<string>();
-        for (const token of tokenize(wig.name)) tokens.add(token);
-        for (const lead of wig.leads || []) {
-          for (const token of tokenize(lead.name)) tokens.add(token);
-        }
-        return { id: wig.id, name: wig.name, tokens: Array.from(tokens) };
-      },
-    );
-  } catch {
-    return [];
-  }
-}
-
-export function tagWigIds(
-  text: string,
-  wigKeywordMap: { id: number; name: string; tokens: string[] }[],
-): number[] {
-  const lower = text.toLowerCase();
-  return wigKeywordMap
-    .filter((wig) => wig.tokens.some((token) => lower.includes(token)))
-    .map((wig) => wig.id);
-}
-
 export function upsertWigSignal(opts: UpsertOpts): void {
   const signalsPath = getSignalsPath(opts.groupFolder);
 
@@ -197,6 +111,7 @@ export function upsertWigSignal(opts: UpsertOpts): void {
   );
 
   if (existing) {
+    if (opts.sourceUrl) existing.source_url = opts.sourceUrl;
     if (isResolutionContent(opts.snippet)) {
       existing.status = 'resolved';
       existing.resolution_snippet = opts.snippet;
@@ -221,6 +136,7 @@ export function upsertWigSignal(opts: UpsertOpts): void {
       status: 'open',
       snippet: opts.snippet,
       resolution_snippet: null,
+      ...(opts.sourceUrl ? { source_url: opts.sourceUrl } : {}),
     });
     logger.info(
       { correlationKey: opts.correlationKey, wigIds: opts.wigIds },

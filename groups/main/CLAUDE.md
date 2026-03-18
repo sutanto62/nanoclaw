@@ -395,19 +395,13 @@ For each email retrieved:
 
 Do this processing *before* composing the briefing so the files reflect the latest state.
 
-### Step 2 — Fetch messages from the database
+### Step 2 — Fetch Lark messages from digest cache
 
 ```bash
-sqlite3 /workspace/project/store/messages.db "
-  SELECT sender_name, content, timestamp
-  FROM messages
-  WHERE timestamp >= datetime('now', '-N hours', '+7 hours')
-    AND is_from_me = 0
-  ORDER BY timestamp ASC;
-"
+cat /workspace/group/lark/latest.md
 ```
 
-Replace `-N hours` with the appropriate window (e.g. `-24 hours` for yesterday, `-168 hours` for last week). Apply the same action item / project / minutes extraction as for emails.
+If the file is absent, Lark is not configured — skip the messages section. Apply the same action item / project / minutes extraction as for emails.
 
 ### Step 3 — Read tracking files
 
@@ -452,6 +446,16 @@ _(list all three groups; omit a group if empty)_
 ```bash
 date -u +"%Y-%m-%dT%H:%M:%SZ" > /workspace/group/last-briefing.txt
 ```
+
+---
+
+## Channel Digest Cache
+
+Pre-built summaries updated by the host on schedule:
+- Lark: `/workspace/group/lark/latest.md` — updated hourly (Lark polls every 15 min)
+- Gmail: `/workspace/group/gmail/latest.md` — updated hourly (urgent/VIP only)
+
+Use these files directly. No API calls needed. If the file is absent, the channel is not configured.
 
 ---
 

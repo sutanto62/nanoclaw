@@ -31,12 +31,15 @@ Read `4dx/wig.json` and `4dx/scoreboard.json` from the group workspace:
 cat /workspace/group/4dx/wig.json 2>/dev/null || echo "NO_CONFIG"
 cat /workspace/group/4dx/scoreboard.json 2>/dev/null || echo "NO_STATE"
 cat /workspace/group/4dx/wig-signals.json 2>/dev/null || echo "NO_SIGNALS"
+cat /workspace/group/4dx/wig-context.md 2>/dev/null || echo "NO_CONTEXT"
 ```
 
 Use these files as the authoritative source for WIG definitions, scoreboard, and carry_forward.
 `wig-signals.json` provides real-time WIG blockers and resolutions — use it in Step 2 and Step 3 instead of hallucinating Whirlwind content.
+`wig-context.md` is a pre-filtered channel cache scan (Lark + Gmail) for WIG/Whirlwind-related messages — use it to supplement `wig-signals.json` in Step 2 and Step 3.
 
 If `wig-signals.json` returns `NO_SIGNALS`: proceed without signals — Whirlwind Watch falls back to inference.
+If `wig-context.md` returns `NO_CONTEXT`: proceed without it — no error, `wig-signals.json` still applies.
 Do NOT re-derive this information from prose.
 
 If `wig.json` returns `NO_CONFIG`: stop and reply — "⚠️ WIG configuration not found. Create `4dx/wig.json` in your group workspace before running the daily plan."
@@ -91,6 +94,8 @@ Use the WIG definitions from `4dx/wig.json` (loaded in Storage Protocol above). 
 | `weekly_done` = 0 and it's mid-week | Elevate to prevent stall. |
 | WIG id in `wig-signals.json` with `status: "open"` | Elevate priority — active blocker. |
 | WIG id appears in 2+ open signals | Strong candidate — repeated blocker. |
+| WIG id has entries in `wig-context.md` (last 24h) | Elevate priority — active channel discussion. |
+| WIG id appears in 3+ entries in `wig-context.md` | Strong candidate — sustained discussion. |
 
 > **Rule:** If a WIG has a `deadline` and it is ≤ 7 days away, always auto-select it regardless of rotation logic.
 
@@ -143,11 +148,13 @@ _🎯 WIG = deep work · 🌪️ Whirlwind = meetings/ops/reactive · ⭐ Norths
 ⚠️ *Whirlwind Watch*
 
 Populate from `wig-signals.json` (loaded in Storage Protocol):
-- For each signal with `status: "open"` AND `first_ts` within last 7 days: one bullet — `snippet` as blocker, `channel + sender` as source, `first_ts` as raised date.
+- For each signal with `status: "open"` AND `first_ts` within last 7 days: one bullet — `snippet` as blocker, `channel + sender` as source, `first_ts` as raised date. If `source_url` is set, append `[Open in Lark](source_url)` inside the italics.
 - For each signal with `status: "resolved"` AND `updated_ts` = today: one ✅ bullet with `resolution_snippet`.
 - If no signals: write "_No open blockers_".
 
-• [Blocker / Risk] _(Source: [channel — sender] · Raised: [first_ts date])_ → [Action to unblock]
+Also check `wig-context.md` "Whirlwind / Untagged Mentions" section. For each entry not already covered by a `wig-signals.json` open signal (match by snippet similarity): add as a bullet with channel, sender, and timestamp. Label source as _(Source: cache scan)_.
+
+• [Blocker / Risk] _(Source: [channel — sender] · Raised: [first_ts date] · [Open in Lark](source_url))_ → [Action to unblock]
 ✅ [Resolution note] _(resolved today)_
 
 _No open blockers_ — if no active blockers

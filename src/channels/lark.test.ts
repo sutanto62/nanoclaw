@@ -16,6 +16,10 @@ const mockMessageCreate = vi.hoisted(() =>
 const mockChatGet = vi.hoisted(() =>
   vi.fn().mockResolvedValue({ data: { name: 'Mock Chat Name' } }),
 );
+// Default: no WIG matches (Ollama not called in tests).
+const mockScoreWigRelevance = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({ summary: '', matches: [] }),
+);
 
 // --- Module mocks ---
 
@@ -51,8 +55,15 @@ vi.mock('../db.js', () => ({
   getAllChats: vi.fn(() => []),
 }));
 
+vi.mock('../wig-scorer.js', () => ({
+  loadWigDefinitions: vi.fn(() => []),
+  scoreWigRelevance: mockScoreWigRelevance,
+}));
+
 vi.mock('@larksuiteoapi/node-sdk', () => ({
   Client: class MockClient {
+    // Returns the bot's own open_id so hasBotMention uses precise open_id matching.
+    request = vi.fn().mockResolvedValue({ bot: { open_id: 'ou_bot' } });
     im = {
       message: {
         create: mockMessageCreate,
@@ -124,6 +135,17 @@ function makeItem(
     },
     mentions: overrides.mentions ?? [],
   };
+}
+
+// Shorthand: a message that mentions the bot (open_id: 'ou_bot').
+// With the WIG guard in processItem, only bot-mention or WIG-matched messages
+// are forwarded to onMessage. Use this for tests that need delivery but aren't
+// testing the filtering logic itself.
+function makeBotItem(overrides: Parameters<typeof makeItem>[0] = {}) {
+  return makeItem({
+    mentions: [{ key: '@_user_bot', id: { open_id: 'ou_bot' }, name: 'Brain' }],
+    ...overrides,
+  });
 }
 
 // Queue items to be returned by the next message.list call, then connect.
@@ -254,7 +276,8 @@ describe('LarkChannel', () => {
     it('delivers message and metadata for registered group', async () => {
       const opts = createTestOpts();
       const channel = new LarkChannel(opts);
-      await connectWithItems(channel, [makeItem()]);
+      // Bot mention is required for processItem to forward to onMessage.
+      await connectWithItems(channel, [makeBotItem()]);
 
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
         'lark:oc_abc123',
@@ -269,7 +292,8 @@ describe('LarkChannel', () => {
           id: 'om_msg1',
           chat_jid: 'lark:oc_abc123',
           sender: 'ou_user1',
-          content: 'Hello everyone',
+          // @Brain prepended because content doesn't already match TRIGGER_PATTERN
+          content: '@Brain Hello everyone',
           is_from_me: false,
         }),
       );
@@ -289,13 +313,13 @@ describe('LarkChannel', () => {
       mockMessageList
         .mockResolvedValueOnce({
           data: {
-            items: [makeItem({ messageId: 'msg1' })],
+            items: [makeBotItem({ messageId: 'msg1' })],
             page_token: 'tok_next',
           },
         })
         .mockResolvedValueOnce({
           data: {
-            items: [makeItem({ messageId: 'msg2' })],
+            items: [makeBotItem({ messageId: 'msg2' })],
             page_token: undefined,
           },
         });
@@ -331,30 +355,36 @@ describe('LarkChannel', () => {
       const opts = createTestOpts();
       const channel = new LarkChannel(opts);
       await connectWithItems(channel, [
-        makeItem({ content: JSON.stringify({ text: 'parsed text' }) }),
+        // Use @Brain in text so TRIGGER_PATTERN matches → no prepend → content unchanged.
+        makeBotItem({
+          content: JSON.stringify({ text: '@Brain parsed text' }),
+        }),
       ]);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
         'lark:oc_abc123',
-        expect.objectContaining({ content: 'parsed text' }),
+        expect.objectContaining({ content: '@Brain parsed text' }),
       );
     });
 
     it('falls back to raw content when JSON parse fails', async () => {
       const opts = createTestOpts();
       const channel = new LarkChannel(opts);
-      await connectWithItems(channel, [makeItem({ content: 'not json' })]);
+      // Use @Brain prefix so TRIGGER_PATTERN matches → no prepend → raw content unchanged.
+      await connectWithItems(channel, [
+        makeBotItem({ content: '@Brain not json' }),
+      ]);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
         'lark:oc_abc123',
-        expect.objectContaining({ content: 'not json' }),
+        expect.objectContaining({ content: '@Brain not json' }),
       );
     });
 
     it('uses sender.id as sender', async () => {
       const opts = createTestOpts();
       const channel = new LarkChannel(opts);
-      await connectWithItems(channel, [makeItem({ senderId: 'ou_xyz789' })]);
+      await connectWithItems(channel, [makeBotItem({ senderId: 'ou_xyz789' })]);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
         'lark:oc_abc123',
@@ -366,7 +396,7 @@ describe('LarkChannel', () => {
       const opts = createTestOpts();
       const channel = new LarkChannel(opts);
       await connectWithItems(channel, [
-        makeItem({ createTime: '1704067200000' }),
+        makeBotItem({ createTime: '1704067200000' }),
       ]);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
@@ -378,7 +408,7 @@ describe('LarkChannel', () => {
     it('logs fetched count when messages are retrieved', async () => {
       const opts = createTestOpts();
       const channel = new LarkChannel(opts);
-      await connectWithItems(channel, [makeItem()]);
+      await connectWithItems(channel, [makeBotItem()]);
 
       expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
         expect.objectContaining({ fetched: 1 }),
@@ -506,10 +536,8 @@ describe('LarkChannel', () => {
         }),
       ]);
 
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'lark:oc_abc123',
-        expect.objectContaining({ content: '@Alice check this out' }),
-      );
+      // No bot mention and no WIG match → message is dropped (not forwarded to agent).
+      expect(opts.onMessage).not.toHaveBeenCalled();
     });
 
     it('does not prepend trigger if message already matches TRIGGER_PATTERN', async () => {
@@ -540,10 +568,8 @@ describe('LarkChannel', () => {
         }),
       ]);
 
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'lark:oc_abc123',
-        expect.objectContaining({ content: 'plain message' }),
-      );
+      // No bot mention and no WIG match → message is dropped (not forwarded to agent).
+      expect(opts.onMessage).not.toHaveBeenCalled();
     });
 
     it('handles mixed mentions: bot + user — only bot triggers prepend', async () => {

@@ -11,96 +11,19 @@ import { registerChannel, ChannelOpts } from './registry.js';
 import {
   hasOpenSignalForKey,
   isResolutionContent,
-  loadWigKeywordMap,
-  tagWigIds,
   upsertWigSignal,
 } from '../wig-signals.js';
+import {
+  loadWigDefinitions,
+  scoreWigRelevance,
+  WigDefinition,
+} from '../wig-scorer.js';
 import {
   Channel,
   OnChatMetadata,
   OnInboundMessage,
   RegisteredGroup,
 } from '../types.js';
-
-const STOPWORDS = new Set([
-  'and',
-  'the',
-  'for',
-  'from',
-  'with',
-  'this',
-  'that',
-  'have',
-  'been',
-  'will',
-  'when',
-  'date',
-  'grow',
-  'into',
-  'over',
-  'live',
-  'goal',
-  'plan',
-  'per',
-  'day',
-  'week',
-  'mid',
-  'top',
-  'held',
-  'done',
-  'sent',
-  'session',
-  'count',
-  'score',
-  'point',
-  'points',
-  'resolved',
-  'shipped',
-  'reviewed',
-  'completed',
-  'triaged',
-  'moment',
-  'increase',
-  'improve',
-  'deliver',
-]);
-
-function tokenize(str: string): string[] {
-  return str
-    .toLowerCase()
-    .split(/[\s\-\/—≥≤@#.,:;!?()[\]{}'"]+/)
-    .filter((w) => w.length >= 4 && !STOPWORDS.has(w) && !/^\d+$/.test(w));
-}
-
-function loadWigKeywords(mainFolder: string): string[] {
-  const wigPath = path.join(
-    process.cwd(),
-    'groups',
-    mainFolder,
-    '4dx',
-    'wig.json',
-  );
-  if (!fs.existsSync(wigPath)) return [];
-  try {
-    const data = JSON.parse(fs.readFileSync(wigPath, 'utf-8'));
-    const keywords = new Set<string>();
-    for (const wig of data.wigs || []) {
-      for (const token of tokenize(wig.name)) keywords.add(token);
-      for (const lead of wig.leads || []) {
-        for (const token of tokenize(lead.name)) keywords.add(token);
-      }
-    }
-    return Array.from(keywords);
-  } catch {
-    return [];
-  }
-}
-
-function isWigRelated(text: string, keywords: string[]): boolean {
-  if (keywords.length === 0) return false;
-  const lower = text.toLowerCase();
-  return keywords.some((k) => lower.includes(k));
-}
 
 // Lark text messages support up to 30,000 characters per message
 const MAX_MESSAGE_LENGTH = 30000;
@@ -129,6 +52,11 @@ export interface LarkChannelOpts {
   registeredGroups: () => Record<string, RegisteredGroup>;
 }
 
+// LarkChannel polls the Lark API on a fixed interval to fetch new messages.
+// Lark does not support webhooks for self-built apps in all configurations,
+// so poll mode is used universally. The channel handles both registered groups
+// (explicitly configured in the DB) and unregistered chats the bot is a member
+// of, so WIG signals can be captured from any workspace chat.
 export class LarkChannel implements Channel {
   name = 'lark';
 
@@ -136,12 +64,20 @@ export class LarkChannel implements Channel {
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private pollIntervalMs: number;
   private opts: LarkChannelOpts;
-  // chatId (without lark: prefix) → last fetched unix ms
+  // Per-chat cursor: chatId (without lark: prefix) → last fetched unix ms.
+  // Persisted across polls so each fetch only retrieves new messages.
   private lastFetchMs = new Map<string, number>();
   // Cache of chatId → display name to avoid repeated im.chat.get() calls
   private chatNameCache = new Map<string, string>();
   // Bot's own open_id — fetched at connect time for precise mention detection
   private botOpenId: string | null = null;
+  private deepLinkBase: string = '';
+  // Full list of chat IDs the bot is a member of, refreshed periodically.
+  private allBotChatIds: string[] = [];
+  private pollCount = 0;
+  // Refresh the full chat list every 4 polls (~1x/hr at the 15-min default).
+  // Avoids an API call on every poll while still discovering new chats quickly.
+  private readonly CHAT_LIST_REFRESH_EVERY = 4;
 
   constructor(
     opts: LarkChannelOpts,
@@ -151,6 +87,12 @@ export class LarkChannel implements Channel {
     this.pollIntervalMs = pollIntervalMs;
   }
 
+  // Startup sequence:
+  //   1. Build a Lark SDK client from credentials in .env
+  //   2. Resolve the bot's own open_id (needed for precise @mention detection)
+  //   3. Seed per-chat cursors from the DB (skip already-seen messages on restart)
+  //   4. Run an initial poll to backfill any messages received since last run
+  //   5. Schedule recurring polls
   async connect(): Promise<void> {
     // Read credentials at connect time — never stored as class fields so
     // they can't leak through heap dumps or accidental serialization.
@@ -158,6 +100,10 @@ export class LarkChannel implements Channel {
     const appId = env.LARK_APP_ID ?? '';
     const appSecret = env.LARK_APP_SECRET ?? '';
     const domain = env.LARK_DOMAIN === 'feishu' ? Domain.Feishu : Domain.Lark;
+    this.deepLinkBase =
+      env.LARK_DOMAIN === 'feishu'
+        ? 'https://applink.feishu.cn/client/chat_detail?chat_id='
+        : 'https://applink.larksuite.com/client/chat_detail?chat_id=';
 
     this.client = new Client({ appId, appSecret, domain });
 
@@ -200,6 +146,9 @@ export class LarkChannel implements Channel {
     this.schedulePoll();
   }
 
+  // Reads last_message_time for all lark: chats from the DB and populates
+  // lastFetchMs. On restart this prevents re-processing messages the agent
+  // already handled in a previous run.
   private seedLastFetchFromDb(): void {
     const chats = getAllChats();
     for (const chat of chats) {
@@ -214,6 +163,37 @@ export class LarkChannel implements Channel {
     );
   }
 
+  // Paginates through im.chat.list to get all chats the bot is a member of.
+  // Used to discover unregistered chats (chats that receive WIG messages but
+  // haven't been registered as a named group).
+  private async fetchAllBotChatIds(): Promise<string[]> {
+    if (!this.client) return [];
+    const chatIds: string[] = [];
+    let pageToken: string | undefined;
+    try {
+      do {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const res: any = await this.client.im.chat.list({
+          params: {
+            page_size: 50,
+            ...(pageToken ? { page_token: pageToken } : {}),
+          },
+        });
+        const items: Array<{ chat_id?: string }> = res.data?.items ?? [];
+        for (const item of items) {
+          if (item.chat_id) chatIds.push(item.chat_id);
+        }
+        pageToken = res.data?.page_token;
+      } while (pageToken);
+    } catch (err) {
+      logger.warn({ err }, 'Lark: failed to fetch bot chat list');
+    }
+    logger.debug({ count: chatIds.length }, 'Lark bot chat list refreshed');
+    return chatIds;
+  }
+
+  // Schedules the next poll using setTimeout rather than setInterval so that
+  // a slow poll (network delay, large backfill) never causes overlapping calls.
   private schedulePoll(): void {
     this.pollTimer = setTimeout(async () => {
       if (!this.client) return;
@@ -224,33 +204,73 @@ export class LarkChannel implements Channel {
     }, this.pollIntervalMs);
   }
 
+  // Returns the main registered group, which is used as the owner of WIG
+  // signals and the source of wig.json keyword definitions.
   private getMainGroup(): { jid: string; group: RegisteredGroup } | null {
     const groups = this.opts.registeredGroups();
     const entry = Object.entries(groups).find(([, g]) => g.isMain === true);
     return entry ? { jid: entry[0], group: entry[1] } : null;
   }
 
+  // Core poll cycle. Merges registered Lark JIDs with any unregistered chats
+  // the bot is a member of, then fetches new messages for all of them in parallel.
+  //
+  // Unregistered chats are included so WIG signals from workspace chats that
+  // haven't been explicitly registered still get captured and surfaced to the
+  // main agent's digest.
   private async pollAllGroups(): Promise<void> {
     const groups = this.opts.registeredGroups();
-    const larkJids = Object.keys(groups).filter((j) => j.startsWith('lark:'));
-    if (larkJids.length === 0) return;
+    const registeredLarkJids = Object.keys(groups).filter((j) =>
+      j.startsWith('lark:'),
+    );
     const main = this.getMainGroup();
     const mainFolder = main?.group.folder ?? '';
-    const wigKeywords = main ? loadWigKeywords(main.group.folder) : [];
-    const wigKeywordMap = main ? loadWigKeywordMap(main.group.folder) : [];
-    logger.debug({ count: larkJids.length }, 'Lark polling groups');
+    // Load WIG definitions once per poll cycle — passed to scoreWigRelevance
+    // inside processItem so the file is only read once regardless of message volume.
+    const wigDefs: WigDefinition[] = main
+      ? loadWigDefinitions(main.group.folder)
+      : [];
+
+    // Refresh bot-accessible chat list every Nth poll
+    this.pollCount++;
+    if (
+      this.allBotChatIds.length === 0 ||
+      this.pollCount % this.CHAT_LIST_REFRESH_EVERY === 0
+    ) {
+      this.allBotChatIds = await this.fetchAllBotChatIds();
+    }
+
+    // Merge registered + unregistered chats
+    const registeredChatIds = new Set(
+      registeredLarkJids.map((j) => j.replace(/^lark:/, '')),
+    );
+    const unregisteredJids = this.allBotChatIds
+      .filter((id) => !registeredChatIds.has(id))
+      .map((id) => `lark:${id}`);
+
+    const allJids = [...registeredLarkJids, ...unregisteredJids];
+    if (allJids.length === 0) return;
+
+    logger.debug(
+      {
+        registered: registeredLarkJids.length,
+        unregistered: unregisteredJids.length,
+      },
+      'Lark polling chats',
+    );
     await Promise.all(
-      larkJids.map((jid) =>
-        this.fetchGroupMessages(jid, wigKeywords, wigKeywordMap, mainFolder),
-      ),
+      allJids.map((jid) => this.fetchGroupMessages(jid, wigDefs, mainFolder)),
     );
   }
 
+  // Fetches all new messages for a single chat since the last cursor position,
+  // paginating through all pages. Advances the cursor to the newest message
+  // timestamp after each run — even if no messages arrived — so the next poll
+  // window stays tight and doesn't re-process the same range.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private async fetchGroupMessages(
     chatJid: string,
-    wigKeywords: string[],
-    wigKeywordMap: { id: number; name: string; tokens: string[] }[],
+    wigDefs: WigDefinition[],
     mainFolder: string,
   ): Promise<void> {
     if (!this.client) return;
@@ -297,14 +317,7 @@ export class LarkChannel implements Channel {
         const createMs = parseInt(item.create_time || '0');
         if (createMs > newestMs) newestMs = createMs;
 
-        await this.processItem(
-          item,
-          chatId,
-          chatJid,
-          wigKeywords,
-          wigKeywordMap,
-          mainFolder,
-        );
+        await this.processItem(item, chatId, chatJid, wigDefs, mainFolder);
         fetched++;
       }
     } while (pageToken);
@@ -317,19 +330,35 @@ export class LarkChannel implements Channel {
     this.lastFetchMs.set(chatId, newestMs);
   }
 
+  // Processes a single Lark message item. Decides whether to forward the
+  // message to the agent based on three criteria, in order:
+  //
+  //   1. Bot mention (@Brain): always triggers the agent.
+  //   2. WIG-related content: triggers the agent with a [WIG] prefix so the
+  //      agent knows the context is a WIG signal, not a direct command.
+  //   3. Resolution follow-up: if the message looks like a resolution (e.g.
+  //      "done", "shipped") and there is an open WIG signal for this chat,
+  //      forward it so the agent can close the signal.
+  //
+  // Messages that match none of the above are silently dropped — this prevents
+  // the agent from being triggered by routine chat noise.
+  //
+  // For WIG and resolution matches, a wig-signals.json record is upserted so
+  // the 4DX scoreboard and daily plan have an accurate picture of WIG activity.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private async processItem(
     item: any,
     chatId: string,
     chatJid: string,
-    wigKeywords: string[],
-    wigKeywordMap: { id: number; name: string; tokens: string[] }[],
+    wigDefs: WigDefinition[],
     mainFolder: string,
   ): Promise<void> {
     const senderId: string = item.sender?.id || '';
     const senderName: string = item.sender?.id || senderId || 'Unknown';
     const timestamp = new Date(parseInt(item.create_time || '0')).toISOString();
 
+    // Register the chat in the DB and update its last_message_time so the
+    // cursor seeder has accurate data on the next restart.
     const chatName = await this.getChatName(chatId);
     this.opts.onChatMetadata(chatJid, timestamp, chatName, 'lark', true);
 
@@ -337,6 +366,8 @@ export class LarkChannel implements Channel {
     let content: string;
 
     if (msgType !== 'text') {
+      // Replace non-text message types with a human-readable placeholder so
+      // the agent can acknowledge them without attempting to parse binary data.
       const safeType = msgType.replace(/[^\x20-\x7E]/g, '?');
       content = NON_TEXT_PLACEHOLDERS[msgType] ?? `[${safeType}]`;
     } else {
@@ -365,14 +396,26 @@ export class LarkChannel implements Channel {
               !m.id?.user_id &&
               m.name?.toLowerCase() === ASSISTANT_NAME.toLowerCase(),
           );
+
+      // If the bot was mentioned but the raw text doesn't already contain
+      // the trigger pattern string, prepend it so the router recognises this
+      // as a directed message to the agent.
       if (hasBotMention && !TRIGGER_PATTERN.test(content)) {
         content = `@${ASSISTANT_NAME} ${content}`;
       }
 
-      // Skip messages that neither mention the bot nor match WIG topics,
-      // unless this is a resolution follow-up for an existing open signal
-      const isWig = isWigRelated(content, wigKeywords);
+      // Semantic WIG scoring: call Ollama to summarize the message and score
+      // its relevance against each WIG definition (1–5). Only scores >= 3 are
+      // returned as matches — this eliminates false positives from short keyword
+      // tokens like "lead" or "tech" that appear in everyday conversation.
       const rawContent = content;
+      const { matches: wigMatches } =
+        wigDefs.length > 0
+          ? await scoreWigRelevance(content, wigDefs)
+          : { matches: [] };
+      const isWig = wigMatches.length > 0;
+      const wigIds = wigMatches.map((m) => m.wigId);
+
       const signalsPath = path.join(
         process.cwd(),
         'groups',
@@ -380,6 +423,9 @@ export class LarkChannel implements Channel {
         '4dx',
         'wig-signals.json',
       );
+      // A resolution is a message that (a) looks like a completion event,
+      // (b) is NOT already WIG-tagged (to avoid double-counting), and
+      // (c) has an open signal for this chat that it can close.
       const isResolution =
         !isWig &&
         isResolutionContent(content) &&
@@ -389,23 +435,32 @@ export class LarkChannel implements Channel {
 
       // Upsert WIG signal for WIG-related messages and resolutions
       if ((isWig || isResolution) && mainFolder) {
+        const sourceUrl = this.deepLinkBase
+          ? `${this.deepLinkBase}${chatId}`
+          : undefined;
         upsertWigSignal({
           channel: 'lark',
           correlationKey: chatJid,
-          wigIds: isWig ? tagWigIds(rawContent, wigKeywordMap) : [],
+          wigIds: isWig ? wigIds : [],
           sender: senderName,
           snippet: rawContent.slice(0, 200),
           timestamp,
           groupFolder: mainFolder,
+          sourceUrl,
         });
       }
 
-      // Prepend trigger for proactive WIG alerts
+      // Prepend trigger for proactive WIG alerts. Include per-WIG IDs in the
+      // tag so the agent knows which specific WIGs are involved.
       if (isWig && !hasBotMention) {
-        content = `@${ASSISTANT_NAME} [WIG] ${content}`;
+        const wigTags = wigIds.map((id) => `[WIG-${id}]`).join(' ');
+        content = `@${ASSISTANT_NAME} ${wigTags} ${content}`;
       }
     }
 
+    // Only forward to the agent if this chat maps to a registered group.
+    // Unregistered chats are polled for WIG signals (above) but don't trigger
+    // a full agent run — there is no CLAUDE.md or group folder to run against.
     const group = this.opts.registeredGroups()[chatJid];
     if (!group) return;
 
@@ -421,6 +476,8 @@ export class LarkChannel implements Channel {
   }
 
   // Resolve a Lark chat_id to its display name via a single API call, then cache.
+  // Cached indefinitely for the lifetime of the process — chat names rarely
+  // change and the cache avoids an API round-trip on every message.
   private async getChatName(chatId: string): Promise<string | undefined> {
     const cached = this.chatNameCache.get(chatId);
     if (cached !== undefined) return cached;
@@ -436,6 +493,9 @@ export class LarkChannel implements Channel {
     }
   }
 
+  // Sends a text message to a Lark chat. Splits messages longer than
+  // MAX_MESSAGE_LENGTH into multiple sequential sends since Lark enforces
+  // a per-message character limit.
   async sendMessage(jid: string, text: string): Promise<void> {
     if (!this.client) {
       logger.warn('Lark client not initialized');
@@ -492,6 +552,9 @@ export class LarkChannel implements Channel {
   async setTyping(_jid: string, _isTyping: boolean): Promise<void> {}
 }
 
+// Self-registers the Lark channel at import time. The registry calls this
+// factory when building the channel list at startup. Returns null if Lark
+// credentials are not configured, which skips the channel gracefully.
 registerChannel('lark', (opts: ChannelOpts) => {
   // Read from .env only — keeps secrets out of process.env so they
   // don't leak to child processes (containers/agents).

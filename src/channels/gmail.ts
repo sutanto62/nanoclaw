@@ -8,12 +8,12 @@ import { OAuth2Client } from 'google-auth-library';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import { DIGEST_INTERVAL_MS, DIGEST_LOOKBACK_HOURS } from '../config.js';
+import { hasOpenSignalForKey, upsertWigSignal } from '../wig-signals.js';
 import {
-  hasOpenSignalForKey,
-  loadWigKeywordMap,
-  tagWigIds,
-  upsertWigSignal,
-} from '../wig-signals.js';
+  loadWigDefinitions,
+  scoreWigRelevance,
+  WigDefinition,
+} from '../wig-scorer.js';
 import {
   Channel,
   OnChatMetadata,
@@ -32,86 +32,6 @@ interface ThreadMeta {
   senderName: string;
   subject: string;
   messageId: string; // RFC 2822 Message-ID for In-Reply-To
-}
-
-const STOPWORDS = new Set([
-  'and',
-  'the',
-  'for',
-  'from',
-  'with',
-  'this',
-  'that',
-  'have',
-  'been',
-  'will',
-  'when',
-  'date',
-  'grow',
-  'into',
-  'over',
-  'live',
-  'goal',
-  'plan',
-  'per',
-  'day',
-  'week',
-  'mid',
-  'top',
-  'held',
-  'done',
-  'sent',
-  'session',
-  'count',
-  'score',
-  'point',
-  'points',
-  'resolved',
-  'shipped',
-  'reviewed',
-  'completed',
-  'triaged',
-  'moment',
-  'increase',
-  'improve',
-  'deliver',
-]);
-
-function tokenize(str: string): string[] {
-  return str
-    .toLowerCase()
-    .split(/[\s\-\/—≥≤@#.,:;!?()[\]{}'"]+/)
-    .filter((w) => w.length >= 4 && !STOPWORDS.has(w) && !/^\d+$/.test(w));
-}
-
-function loadWigKeywords(mainFolder: string): string[] {
-  const wigPath = path.join(
-    process.cwd(),
-    'groups',
-    mainFolder,
-    '4dx',
-    'wig.json',
-  );
-  if (!fs.existsSync(wigPath)) return [];
-  try {
-    const data = JSON.parse(fs.readFileSync(wigPath, 'utf-8'));
-    const keywords = new Set<string>();
-    for (const wig of data.wigs || []) {
-      for (const token of tokenize(wig.name)) keywords.add(token);
-      for (const lead of wig.leads || []) {
-        for (const token of tokenize(lead.name)) keywords.add(token);
-      }
-    }
-    return Array.from(keywords);
-  } catch {
-    return [];
-  }
-}
-
-function isWigRelated(text: string, keywords: string[]): boolean {
-  if (keywords.length === 0) return false;
-  const lower = text.toLowerCase();
-  return keywords.some((k) => lower.includes(k));
 }
 
 const URGENT_KEYWORDS = [
@@ -344,8 +264,9 @@ export class GmailChannel implements Channel {
 
     const main = this.getMainGroup();
     const vipNames = main ? loadVipNames(main.group.folder) : [];
-    const wigKeywords = main ? loadWigKeywords(main.group.folder) : [];
-    const wigKeywordMap = main ? loadWigKeywordMap(main.group.folder) : [];
+    const wigDefs: WigDefinition[] = main
+      ? loadWigDefinitions(main.group.folder)
+      : [];
 
     try {
       const afterEpoch = Math.floor(
@@ -366,8 +287,7 @@ export class GmailChannel implements Channel {
           const changed = await this.processEmailMetadata(
             stub.id,
             vipNames,
-            wigKeywords,
-            wigKeywordMap,
+            wigDefs,
             main,
           );
           if (changed) metaChanged = true;
@@ -399,8 +319,7 @@ export class GmailChannel implements Channel {
   private async processEmailMetadata(
     messageId: string,
     vipNames: string[],
-    wigKeywords: string[],
-    wigKeywordMap: { id: number; name: string; tokens: string[] }[],
+    wigDefs: WigDefinition[],
     main: { jid: string; group: RegisteredGroup } | null,
   ): Promise<boolean> {
     if (!this.gmail) return false;
@@ -448,15 +367,24 @@ export class GmailChannel implements Channel {
       false,
     );
 
+    // Semantic WIG scoring against email subject + snippet. The full body is
+    // not fetched at this stage (metadata-only pass), so subject+snippet is
+    // the best available signal for relevance scoring.
+    const combinedText = `${subject} ${snippet}`;
+    const { matches: wigMatches } =
+      wigDefs.length > 0
+        ? await scoreWigRelevance(combinedText, wigDefs)
+        : { matches: [] };
+    const wigRelated = wigMatches.length > 0;
+    const wigIds = wigMatches.map((m) => m.wigId);
+
     const urgent =
       isVipSender(senderName, vipNames) ||
       isUrgentSubject(subject) ||
-      isWigRelated(`${subject} ${snippet}`, wigKeywords);
+      wigRelated;
 
     // Upsert WIG signal for WIG-related emails and resolution follow-ups
     if (main) {
-      const combinedText = `${subject} ${snippet}`;
-      const wigRelated = isWigRelated(combinedText, wigKeywords);
       const correlationKey = `gmail:${threadId}`;
       const signalsPath = path.join(
         'groups',
@@ -467,11 +395,10 @@ export class GmailChannel implements Channel {
       const hasOpen = hasOpenSignalForKey(correlationKey, signalsPath);
 
       if (wigRelated || hasOpen) {
-        const wigIds = wigRelated ? tagWigIds(combinedText, wigKeywordMap) : [];
         upsertWigSignal({
           channel: 'gmail',
           correlationKey,
-          wigIds,
+          wigIds: wigRelated ? wigIds : [],
           sender: senderName,
           snippet: `${subject}: ${snippet}`.slice(0, 200),
           timestamp,
