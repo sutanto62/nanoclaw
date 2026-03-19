@@ -260,7 +260,7 @@ The task will run in that group's context with access to their files and memory.
 
 Cayadi is responsible for:
 - Build and create a successful company.
-- Achieve company north star metrics. Read the north star metrics from `/workspace/group/north-star.md`, each section `#YYYY-MM-DD` contains yearly metrics. All subsequent bullets is the metrics that you have keep in mind. 
+- Achieve company north star metrics. Read from `/workspace/group/north-star.json` — structured JSON with yearly objectives, quarterly key results, progress, score, verdict, and next actions. WIG IDs in each KR link to `/workspace/group/4dx/wig.json` for weekly execution. Agent should auto-update `current` and recompute `score` + `verdict` from scoreboard data when reporting.
 - Leading product engineering teams across multiple projects
 - Developing and maintaining high-quality software products
 - Making product-strategy and architectural decisions

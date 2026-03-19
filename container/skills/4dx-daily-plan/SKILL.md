@@ -25,11 +25,12 @@ Triggers: message contains "add commitment", "add M1", "update M1",
 
 ### On startup
 
-Read `4dx/wig.json` and `4dx/scoreboard.json` from the group workspace:
+Read `4dx/wig.json`, `4dx/scoreboard.json`, `north-star.json`, and `4dx/wig-signals.json` from the group workspace:
 
 ```bash
 cat /workspace/group/4dx/wig.json 2>/dev/null || echo "NO_CONFIG"
 cat /workspace/group/4dx/scoreboard.json 2>/dev/null || echo "NO_STATE"
+cat /workspace/group/north-star.json 2>/dev/null || echo "NO_NORTHSTAR"
 cat /workspace/group/4dx/wig-signals.json 2>/dev/null || echo "NO_SIGNALS"
 cat /workspace/group/4dx/wig-context.md 2>/dev/null || echo "NO_CONTEXT"
 ```
@@ -37,14 +38,18 @@ cat /workspace/group/4dx/wig-context.md 2>/dev/null || echo "NO_CONTEXT"
 Use these files as the authoritative source for WIG definitions, scoreboard, and carry_forward.
 `wig-signals.json` provides real-time WIG blockers and resolutions — use it in Step 2 and Step 3 instead of hallucinating Whirlwind content.
 `wig-context.md` is a pre-filtered channel cache scan (Lark + Gmail) for WIG/Whirlwind-related messages — use it to supplement `wig-signals.json` in Step 2 and Step 3.
+`north-star.json` provides yearly objectives and quarterly Key Results — use it to show KR progress in Step 3 and to elevate WIGs whose parent KR is `at_risk` or `losing` in Step 2.
 
 If `wig-signals.json` returns `NO_SIGNALS`: proceed without signals — Whirlwind Watch falls back to inference.
 If `wig-context.md` returns `NO_CONTEXT`: proceed without it — no error, `wig-signals.json` still applies.
+If `north-star.json` returns `NO_NORTHSTAR`: skip the North Star Pulse section in Step 3.
 Do NOT re-derive this information from prose.
 
 If `wig.json` returns `NO_CONFIG`: stop and reply — "⚠️ WIG configuration not found. Create `4dx/wig.json` in your group workspace before running the daily plan."
 
 If `scoreboard.json` returns `NO_STATE`: initialize a fresh scoreboard with empty `scoreboard` array and empty `carry_forward`. Do not abort — this is expected on first run.
+
+**North Star linkage:** For each WIG id, find matching `wig_ids` entries in `north-star.json` objectives → key_results. A WIG whose parent KR has `verdict: "at_risk"` or `"losing"` is treated the same as `lag_status = "at_risk"` in the urgency signal table (Step 2).
 
 ### After plan generated
 
@@ -96,6 +101,8 @@ Use the WIG definitions from `4dx/wig.json` (loaded in Storage Protocol above). 
 | WIG id appears in 2+ open signals | Strong candidate — repeated blocker. |
 | WIG id has entries in `wig-context.md` (last 24h) | Elevate priority — active channel discussion. |
 | WIG id appears in 3+ entries in `wig-context.md` | Strong candidate — sustained discussion. |
+| Parent KR in `north-star.json` has `verdict: "at_risk"` | Elevate priority — quarterly target at risk. |
+| Parent KR in `north-star.json` has `verdict: "losing"` | Highest priority — quarterly target falling behind. |
 
 > **Rule:** If a WIG has a `deadline` and it is ≤ 7 days away, always auto-select it regardless of rotation logic.
 
@@ -167,6 +174,21 @@ _No open blockers_ — if no active blockers
 • WIG [Y] — [Name] ([Area]) | Q: 🟢/🟡/🔴 | Week: ✅/❌
 
 _🟢 On track · 🟡 At risk · 🔴 Behind · ✅ Lead measures hit this week · ❌ Missed_
+
+---
+
+🌟 *North Star Pulse*
+
+(Omit this section if `north-star.json` returned `NO_NORTHSTAR`.)
+
+For each objective in `north-star.json`, show the current-quarter KR only. Format:
+
+• [Objective name] → [KR description] | [current] / [target] [unit] | [score × 100]% | [verdict emoji]
+  ↳ WIGs driving this: WIG X, WIG Y
+
+Verdict emoji: 🏆 winning · 🟢 on_track · 🟡 at_risk · 🔴 losing
+
+_Source: north-star.json — update `current` values via M7 or weekly cadence._
 
 ---
 

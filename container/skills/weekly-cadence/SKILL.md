@@ -59,12 +59,16 @@ If it exists, read it and offer to continue editing or start fresh.
 ```bash
 cat /workspace/group/4dx/scoreboard.json 2>/dev/null || echo "NO_STATE"
 cat /workspace/group/4dx/wig.json 2>/dev/null || echo "NO_CONFIG"
+cat /workspace/group/north-star.json 2>/dev/null || echo "NO_NORTHSTAR"
 ```
 
 From `scoreboard.json` extract: `scoreboard` (weekly_done, weekly_target, lead_streak, lag_current, lag_status per WIG), `carry_forward`.
 From `wig.json` extract: WIG names, lag metrics, lead measure names and weekly_targets.
+From `north-star.json` extract: current-quarter KRs (filter by `quarter` matching current quarter), their `progress`, `score`, `verdict`, and `next_action`. Use WIG → KR linkage (`wig_ids`) to connect WIG weekly performance to KR trajectory.
 
-Use this structured data to pre-fill the Highlights, Lowlights, and Business Observations sections (WIG progress, streaks, lag measure movements).
+If `north-star.json` returns `NO_NORTHSTAR`: proceed without north star context. Section 4 falls back to manual observations.
+
+Use this structured data to pre-fill the Highlights, Lowlights, and Business Observations sections (WIG progress, streaks, lag measure movements, KR trajectory).
 
 ### 2B — Read workspace notes
 
@@ -149,18 +153,20 @@ ok / skip / add: … / update N: … / remove N
 
 ### Section 4 — Business Observations
 
-Insights tied to SawitPRO's north star metrics:
-1. Incremental FFB volume: farmer → trader → mills
-2. Fertilizer sales
-3. Number of active farmers using the system
+Insights tied to the north star KRs from `north-star.json`. Pre-fill from current-quarter KR data:
+- For each objective, show: KR description, current vs. target, score, verdict, and whether this week's WIG activity moved the needle.
+- Flag any KR with `verdict: "at_risk"` or `"losing"` as a risk bullet.
+- If `NO_NORTHSTAR`: fall back to the three known metrics (FFB volume, fertilizer sales, active farmers) and ask the user to provide numbers.
 
 Reply format:
 ```
 *Section 4 of 6: Business Observations*
 
 Draft:
-1. [signal relevant to FFB volume, fertilizer, or farmer count]
-2. [or "No signals found — add observations vs. north star metrics"]
+1. [Objective name] — [KR description]: [current] / [target] [unit] ([score × 100]%) [verdict emoji]
+   WIGs this week: [weekly_done]/[weekly_target] lead measures hit
+2. [next objective...]
+3. [or risk flag: ⚠️ KR X at_risk — gap is N units, N weeks to quarter end]
 
 ok / skip / add: … / update N: … / remove N
 ```
@@ -290,12 +296,65 @@ print('Scoreboard weekly_done reset for new week')
 
 > **Note:** Build the actual Python script with real win_day_count, total_active_days, and weekly_summary values from the session.
 
+If `north-star.json` was loaded, also update KR `current` values from the week's lag snapshots, recompute scores and verdicts, and generate `next_action`:
+
+```python
+import json, os
+from datetime import date
+
+VERDICT_MAP = [(0.7, 'winning'), (0.4, 'on_track'), (0.2, 'at_risk')]
+
+def compute_verdict(score):
+    for threshold, label in VERDICT_MAP:
+        if score >= threshold: return label
+    return 'losing'
+
+def suggest_next_action(kr, verdict):
+    weeks_left = max(1, (13 - date.today().isocalendar()[1] % 13))
+    gap = kr['progress']['target'] - kr['progress']['current']
+    if verdict == 'losing':
+        return f"Critical: {gap} {kr['progress']['unit']} gap with ~{weeks_left} weeks left — escalate and re-plan."
+    if verdict == 'at_risk':
+        return f"At risk: need {gap} {kr['progress']['unit']} more — increase WIG frequency."
+    if verdict == 'on_track':
+        return f"On track — maintain lead measure pace to close {gap} {kr['progress']['unit']} gap."
+    return f"Winning — protect WIG time, avoid Whirlwind drift."
+
+with open('/workspace/group/north-star.json') as f:
+    ns = json.load(f)
+
+month = date.today().month
+current_quarter = f"Q{(month - 1) // 3 + 1}"
+
+for obj in ns['objectives']:
+    for kr in obj['key_results']:
+        if kr['quarter'] != current_quarter:
+            continue
+        # Update current from lag_snapshots for linked WIGs where applicable
+        # kr['progress']['current'] = <new value confirmed during Section 4>
+        target = kr['progress']['target']
+        current = kr['progress']['current']
+        score = round(current / target, 3) if target else 0.0
+        kr['score'] = score
+        kr['verdict'] = compute_verdict(score)
+        kr['next_action'] = suggest_next_action(kr, kr['verdict'])
+
+tmp = '/workspace/group/north-star.json.tmp'
+with open(tmp, 'w') as f:
+    json.dump(ns, f, indent=2)
+os.rename(tmp, '/workspace/group/north-star.json')
+print('north-star.json updated with weekly KR review')
+```
+
+> **Note:** Build the actual script with real `current` values confirmed in Section 4. Only update KRs where the user provided a new lag measure value.
+
 After writing, confirm to the user:
 
 ```
 Weekly summary saved: weekly/{{WEEK_LABEL}}.md
 4DX session saved: 4dx/sessions/{{WEEK_LABEL}}.json
 Scoreboard reset for new week.
+North Star KRs updated: north-star.json
 ```
 
 ---

@@ -41,7 +41,12 @@ Read structured state and config from the group workspace:
 ```bash
 cat /workspace/group/4dx/scoreboard.json 2>/dev/null || echo "NO_STATE"
 cat /workspace/group/4dx/wig.json 2>/dev/null || echo "NO_CONFIG"
+cat /workspace/group/north-star.json 2>/dev/null || echo "NO_NORTHSTAR"
 ```
+
+If `north-star.json` is present: for each WIG in today's `wig_focus`, look up linked KRs via `wig_ids`. After the summary is generated and the user confirms any lag measure updates, recompute KR `score` and `verdict` and write back to `north-star.json` (see "After summary generated" below).
+
+If `north-star.json` returns `NO_NORTHSTAR`: proceed without it — skip the KR Impact column and north-star write-back.
 
 From `scoreboard.json` extract:
 - `today.m1_commitments` — the morning commitments to cross-reference (use instead of re-reading the markdown file)
@@ -89,7 +94,59 @@ with open('/workspace/group/4dx/scoreboard.json', 'w') as f:
 print('scoreboard.json updated with M7 data')
 ```
 
-> **Note:** Build the actual Python script with real values — do not use the placeholders above verbatim.
+If `north-star.json` was loaded and the user provided updated lag measure values during Step 1D, also write back to `north-star.json`. Build and run an inline Python script:
+
+```python
+import json
+
+VERDICT_THRESHOLDS = {'winning': 0.7, 'on_track': 0.4, 'at_risk': 0.2}
+
+def compute_verdict(score):
+    if score >= 0.7: return 'winning'
+    if score >= 0.4: return 'on_track'
+    if score >= 0.2: return 'at_risk'
+    return 'losing'
+
+def suggest_next_action(kr, verdict):
+    # Return a concrete one-line next action based on verdict and KR description
+    if verdict in ('at_risk', 'losing'):
+        return f"Urgent: close gap on {kr['description']} — escalate blockers now."
+    if verdict == 'on_track':
+        return f"Maintain pace on {kr['description']} — check lead measure streak."
+    return f"On track for {kr['description']} — protect WIG time."
+
+with open('/workspace/group/north-star.json') as f:
+    ns = json.load(f)
+
+# Determine current quarter from today's date
+from datetime import date
+month = date.today().month
+current_quarter = f"Q{(month - 1) // 3 + 1}"
+
+# For each KR in current quarter, find linked WIGs updated today and refresh score
+for obj in ns['objectives']:
+    for kr in obj['key_results']:
+        if kr['quarter'] != current_quarter:
+            continue
+        # Substitute real updated current value if the user reported a new lag measure for any linked WIG
+        # new_current = <actual value from session or leave unchanged>
+        # kr['progress']['current'] = new_current
+
+        target = kr['progress']['target']
+        current = kr['progress']['current']
+        score = round(current / target, 3) if target else 0.0
+        kr['score'] = score
+        kr['verdict'] = compute_verdict(score)
+        kr['next_action'] = suggest_next_action(kr, kr['verdict'])
+
+ns_tmp = '/workspace/group/north-star.json.tmp'
+with open(ns_tmp, 'w') as f:
+    json.dump(ns, f, indent=2)
+import os; os.rename(ns_tmp, '/workspace/group/north-star.json')
+print('north-star.json updated with KR scores and verdicts')
+```
+
+> **Note:** Build the actual Python script with real values — do not use the placeholders above verbatim. Only update `kr['progress']['current']` lines for WIGs where the user reported a new lag measure value today.
 
 ---
 
@@ -197,12 +254,13 @@ Output in this exact structure:
 
 #### 🚀 WIG Output (Advanced)
 
-| WIG | Lead Measure Action | Committed? | Scoreboard Impact |
-|---|---|---|---|
-| WIG [X] — [Name] `[Area]` | [specific action taken] | ✅ Yes / ➕ Bonus / ❌ Missed | [delta or "no change"] |
-| WIG [Y] — [Name] `[Area]` | [specific action taken] | ✅ Yes / ➕ Bonus / ❌ Missed | [delta or "no change"] |
+| WIG | Lead Measure Action | Committed? | Scoreboard Impact | KR Impact |
+|---|---|---|---|---|
+| WIG [X] — [Name] `[Area]` | [specific action taken] | ✅ Yes / ➕ Bonus / ❌ Missed | [delta or "no change"] | [KR id — verdict emoji] |
+| WIG [Y] — [Name] `[Area]` | [specific action taken] | ✅ Yes / ➕ Bonus / ❌ Missed | [delta or "no change"] | [KR id — verdict emoji] |
 
 > ✅ Committed = was on morning M1 plan · ➕ Bonus = unplanned WIG action · ❌ Missed = committed but not done
+> KR Impact: look up `wig_ids` in `north-star.json` for each WIG. Show the current-quarter KR id and its verdict emoji (🏆/🟢/🟡/🔴). If `NO_NORTHSTAR`, omit the column entirely.
 
 ---
 
