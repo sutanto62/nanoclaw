@@ -1,0 +1,9 @@
+skill: backlog-collector
+version: 1.0.0
+description: "Product backlog collector for container agents: add, view, update, and groom items linked to north-star.json objectives and products (AgenPRO, KebunPRO, PetaniPRO, TimPRO)"
+core_version: 1.2.1
+adds:
+  - container/skills/backlog-collector/SKILL.md
+modifies: []
+conflicts: []
+depends: []
