@@ -302,7 +302,19 @@ export class LarkChannel implements Channel {
           },
         });
       } catch (err) {
-        logger.error({ chatJid, err }, 'Lark message.list failed');
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const e = err as any;
+        logger.error(
+          {
+            chatJid,
+            status: e?.status ?? e?.response?.status,
+            larkCode: e?.code ?? e?.response?.data?.code,
+            larkMsg: e?.message ?? e?.response?.data?.msg,
+            responseData: e?.response?.data,
+            errKeys: e ? Object.keys(e) : [],
+          },
+          'Lark message.list failed',
+        );
         return;
       }
 
