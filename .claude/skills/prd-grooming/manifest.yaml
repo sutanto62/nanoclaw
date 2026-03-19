@@ -1,0 +1,9 @@
+skill: prd-grooming
+version: 1.0.0
+description: "Interactive PRD + user story drafting for sprint grooming. Scans message cache, scores against north-star.json, researches market context, drafts structured PRD."
+core_version: 1.0.0
+adds:
+  - container/skills/prd-grooming/SKILL.md
+modifies: []
+conflicts: []
+depends: []

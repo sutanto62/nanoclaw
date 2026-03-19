@@ -12,6 +12,7 @@ const envConfig = readEnvFile([
   'TELEGRAM_BOT_POOL',
   'DIGEST_INTERVAL_MS',
   'DIGEST_LOOKBACK_HOURS',
+  'CLAUDE_PLANNING_MODEL',
 ]);
 
 export const ASSISTANT_NAME =
@@ -59,6 +60,10 @@ export const CREDENTIAL_PROXY_PORT = parseInt(
 );
 export const IPC_POLL_INTERVAL = 1000;
 export const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10); // 30min default — how long to keep container alive after last result
+export const CLAUDE_PLANNING_MODEL =
+  process.env.CLAUDE_PLANNING_MODEL ||
+  envConfig.CLAUDE_PLANNING_MODEL ||
+  undefined;
 export const MAX_CONCURRENT_CONTAINERS = Math.max(
   1,
   parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,

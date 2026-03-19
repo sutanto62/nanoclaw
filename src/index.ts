@@ -3,6 +3,7 @@ import path from 'path';
 
 import {
   ASSISTANT_NAME,
+  CLAUDE_PLANNING_MODEL,
   CREDENTIAL_PROXY_PORT,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
@@ -313,6 +314,12 @@ async function runAgent(
       }
     : undefined;
 
+  const PRD_GROOMING_PATTERN =
+    /prd.?grooming|sprint.?grooming|write.?prd|feature.?ideas|prd.?planning|grooming.?session/i;
+  const modelOverride = PRD_GROOMING_PATTERN.test(prompt)
+    ? CLAUDE_PLANNING_MODEL
+    : undefined;
+
   try {
     const output = await runContainerAgent(
       group,
@@ -323,6 +330,7 @@ async function runAgent(
         chatJid,
         isMain,
         assistantName: ASSISTANT_NAME,
+        model: modelOverride,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),

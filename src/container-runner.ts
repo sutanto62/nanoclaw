@@ -42,6 +42,7 @@ export interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  model?: string;
 }
 
 export interface ContainerOutput {
@@ -80,10 +81,17 @@ function buildVolumeMounts(
 
     // Shadow .env so the agent cannot read secrets from the mounted project root.
     // Credentials are injected by the credential proxy, never exposed to containers.
+    // Use a real empty file instead of /dev/null — Apple Container requires a
+    // regular file or directory as the bind-mount source (character devices not supported).
     const envFile = path.join(projectRoot, '.env');
     if (fs.existsSync(envFile)) {
+      const emptyEnvFile = path.join(DATA_DIR, 'empty.env');
+      if (!fs.existsSync(emptyEnvFile)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+        fs.writeFileSync(emptyEnvFile, '');
+      }
       mounts.push({
-        hostPath: '/dev/null',
+        hostPath: emptyEnvFile,
         containerPath: '/workspace/project/.env',
         readonly: true,
       });
