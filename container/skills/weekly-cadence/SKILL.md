@@ -1,46 +1,45 @@
----
+--
 name: add-weekly-cadence
-version: 0.0.1
-description: |
-  Structured weekly review: highlights, lowlights, risks, business observations,
-  next actions, and requests. Saves a dated summary to /workspace/group/weekly/YYYY-WXX.md.
-allowed-tools:
-  - Read
-  - Write
-  - Bash
+version: 0.1.0
+description: Weekly cadence skill structured as a 4DX "20-Minute Win" — audit past WIG commitments, update and study the scoreboard, then commit to next week's lead measure actions. Produces a personal WIG cadence file and a shareable team update. Use when user asks for "weekly cadence", "weekly review", "weekly wrap up", or "cadence".
 ---
 
-# Weekly Cadence
+# Weekly Cadence — 20-Minute Win
 
-Guide the user through a structured weekly review across 6 sections. Save the result to `/workspace/group/weekly/YYYY-WXX.md`.
-
-## Trigger
-
-Use this skill whenever the user says:
-- "weekly cadence", "weekly review", "do my weekly", "weekly summary"
-- "let's do the weekly", "weekly report", "weekly wrap-up"
+Three phases: **Report the Past → Update the Scoreboard → New Commitments**. Two outputs: personal WIG cadence and team update.
 
 ---
 
-## Step 1: Determine week label
-
-```bash
-python3 -c "from datetime import date; d=date.today(); print(f'{d.isocalendar()[0]}-W{d.isocalendar()[1]:02d}')"
-```
-
-Also compute the Monday and Sunday of the current week:
+## Step 0: Compute Week Labels
 
 ```bash
 python3 -c "
 from datetime import date, timedelta
+import sys
+
 today = date.today()
+iso = today.isocalendar()
+year, week = iso[0], iso[1]
+
+# Current week label
+print(f'{year}-W{week:02d}')
+
+# Week range (Mon–Sun)
 mon = today - timedelta(days=today.weekday())
 sun = mon + timedelta(days=6)
-print(f'{mon.strftime(\"%d %b\")} – {sun.strftime(\"%d %b %Y\")}')
+print(f'{mon.strftime(\"%d %b\")} \u2013 {sun.strftime(\"%d %b %Y\")}')
+
+# Previous week label
+prev = today - timedelta(weeks=1)
+p_iso = prev.isocalendar()
+print(f'{p_iso[0]}-W{p_iso[1]:02d}')
 "
 ```
 
-Set `WEEK_LABEL` (e.g. `2026-W11`) and `WEEK_RANGE` (e.g. `09 Mar – 15 Mar 2026`).
+Set:
+- `WEEK_LABEL` — e.g. `2026-W12`
+- `WEEK_RANGE` — e.g. `16 Mar – 22 Mar 2026`
+- `PREV_WEEK_LABEL` — e.g. `2026-W11`
 
 Check if a file already exists for this week:
 
@@ -48,313 +47,214 @@ Check if a file already exists for this week:
 test -f /workspace/group/weekly/${WEEK_LABEL}.md && echo "exists" || echo "new"
 ```
 
-If it exists, read it and offer to continue editing or start fresh.
+If it exists, read it and offer to continue from where the user left off or start fresh.
 
 ---
 
-## Step 2: Read context from workspace
+## Phase 1 — Report the Past (~5 min)
 
-### 2A — Read 4DX structured data
+Audit last week's WIG commitments. Show what was committed, what was done.
+
+### 1A — Read prior session data
+
+```bash
+cat /workspace/group/4dx/sessions/${PREV_WEEK_LABEL}.json 2>/dev/null || echo "NO_SESSION"
+cat /workspace/group/weekly/${PREV_WEEK_LABEL}.md 2>/dev/null || echo "NO_WEEKLY"
+```
+
+- If `sessions/{PREV_WEEK_LABEL}.json` exists: extract `lead_completions`, `lag_snapshots`, `weekly_summary`, and any `next_week.commitments` saved at the end of that session.
+- If no session JSON but weekly `.md` exists: read the `## Next WIG Commitments` section from that file.
+- If neither exists: skip Phase 1 and note "First session — no prior commitment data."
+
+### 1B — Present commitment audit table
+
+Show one message with the audit table. Wait for user's reply before proceeding.
+
+```
+*Phase 1 — Past Commitment Audit (Week {PREV_WEEK_LABEL})*
+
+| WIG | Commitment | Status |
+|-----|------------|--------|
+| WIG 1 | [commitment from prior session] | ✅ Met / ❌ Missed / 🔄 Partial |
+| WIG 2 | [commitment] | ✅ / ❌ / 🔄 |
+
+Carry-forward items:
+- [any carry_forward from prior scoreboard that were resolved or persist]
+
+ok to confirm / correct any row (e.g. "WIG 2 was partial") / skip
+```
+
+After user confirms or corrects, proceed to Phase 2.
+
+---
+
+## Phase 2 — Update + Study the Scoreboard (~10 min)
+
+### 2A — Prompt for lag measure updates
+
+Before reading any data, ask:
+
+```
+*Phase 2A — Scoreboard Update*
+
+Before we review — any lag measure numbers to update this week?
+(e.g. ERP go-live %, CSAT score, active farmers, sales volume)
+
+Enter updates or "ok" to skip.
+```
+
+If the user provides updates, apply them to `/workspace/group/4dx/scoreboard.json`:
+
+```python
+import json
+
+with open('/workspace/group/4dx/scoreboard.json') as f:
+    state = json.load(f)
+
+# Apply user-provided updates — example:
+# state['scoreboard']['wig1']['lag_current'] = NEW_VALUE
+# state['scoreboard']['wig1']['lag_status'] = 'on_track'  # or 'at_risk' or 'losing'
+
+state['updated'] = date.today().isoformat()
+with open('/workspace/group/4dx/scoreboard.json', 'w') as f:
+    json.dump(state, f, indent=2)
+```
+
+### 2B — Prompt for WIG config updates
+
+Ask:
+
+```
+*Phase 2B — WIG Config Check*
+
+Any WIG config changes this week?
+- Deadlines moved
+- Lag measure targets revised
+- Lead measure weekly_target adjusted
+- WIG description updated (the "from X to Y by date" narrative)
+
+Enter changes or "ok" to proceed with existing config.
+```
+
+If the user provides changes, write them to `/workspace/group/4dx/wig.json` before proceeding. If "ok" or no changes, skip.
+
+### 2C — Read and display scoreboard
 
 ```bash
 cat /workspace/group/4dx/scoreboard.json 2>/dev/null || echo "NO_STATE"
 cat /workspace/group/4dx/wig.json 2>/dev/null || echo "NO_CONFIG"
-cat /workspace/group/north-star.json 2>/dev/null || echo "NO_NORTHSTAR"
 ```
 
-From `scoreboard.json` extract: `scoreboard` (weekly_done, weekly_target, lead_streak, lag_current, lag_status per WIG), `carry_forward`.
-From `wig.json` extract: WIG names, lag metrics, lead measure names and weekly_targets.
-From `north-star.json` extract: current-quarter KRs (filter by `quarter` matching current quarter), their `progress`, `score`, `verdict`, and `next_action`. Use WIG → KR linkage (`wig_ids`) to connect WIG weekly performance to KR trajectory.
+Present the scoreboard in one message:
 
-If `north-star.json` returns `NO_NORTHSTAR`: proceed without north star context. Section 4 falls back to manual observations.
+```
+*Phase 2C — Scoreboard*
 
-Use this structured data to pre-fill the Highlights, Lowlights, and Business Observations sections (WIG progress, streaks, lag measure movements, KR trajectory).
+| WIG | Lag Measure | Current | Target | Status | Lead Streak |
+|-----|-------------|---------|--------|--------|-------------|
+| WIG 1 | [metric name] | [lag_current] | [lag_target] | 🟢/🟡/🔴 | [n days] |
+| WIG 2 | … | … | … | … | … |
 
-### 2B — Read workspace notes
+Status key: 🟢 on_track  🟡 at_risk  🔴 losing
+```
 
-Check for any notes or task files in the group workspace:
+Status mapping:
+- `on_track` → 🟢
+- `at_risk` → 🟡
+- `losing` → 🔴
+
+### 2D — Query messages for signals
 
 ```bash
-ls /workspace/group/*.md 2>/dev/null || echo "none"
+python3 -c "
+import sqlite3, json
+from datetime import date, timedelta
+
+db_path = '/data/messages.db'
+cutoff = (date.today() - timedelta(days=7)).isoformat()
+
+try:
+    conn = sqlite3.connect(db_path)
+    rows = conn.execute('''
+        SELECT sender_name, content, timestamp
+        FROM messages
+        WHERE timestamp >= ?
+          AND is_bot_message = 0
+        ORDER BY timestamp DESC
+        LIMIT 200
+    ''', (cutoff,)).fetchall()
+    conn.close()
+    print(json.dumps([{'sender': r[0], 'content': r[1], 'ts': r[2]} for r in rows]))
+except Exception as e:
+    print(f'NO_DB: {e}')
+"
 ```
 
-Read any found files (skip files > 150 lines). Use their content to pre-fill drafts below.
+If `NO_DB`: skip message analysis, note "Message analysis unavailable — proceeding with scoreboard only."
+
+If messages retrieved: cluster content into themes. For each WIG where `lag_status` is `at_risk` or `losing`, generate 2–3 specific, actionable suggestions sourced from message patterns, carry_forward items, and WIG context. Suggestions must be concrete (name an action, artifact, or person) — not generic advice.
+
+Present suggestions:
+
+```
+*Phase 2D — Lead Measure Suggestions*
+
+WIG [N] (🟡/🔴 [status]):
+1. [Specific action grounded in message signals or carry_forward]
+2. [Another specific action]
+
+ok / adjust
+```
+
+Wait for user acknowledgment before Phase 3.
 
 ---
 
-## Step 3: Section walkthrough (sequential, one reply per section)
+## Phase 3 — New Commitments (~5 min)
 
-For each section, send a message with the draft pre-filled from workspace context (bullets numbered for reference). Wait for the user's reply before moving to the next section.
+Walk through each WIG in priority order (at_risk / losing first). For each:
 
-### Reply options
-
-| Reply | Action |
-|-------|--------|
-| `ok` / `confirm` / `yes` | Use draft as-is |
-| `skip` | Leave section blank |
-| `add: <text>` | Append a new bullet |
-| `update <N>: <text>` | Replace bullet N with new text |
-| `remove <N>` | Delete bullet N |
-| Any freeform text | Replace entire section with that text |
-
-Multiple update commands can be sent in one reply (one per line). After each update command, show the revised list and ask to confirm or continue editing.
-
-Keep each prompt short. Bullets numbered, no paragraphs.
-
----
-
-### Section 1 — Highlights
-
-What went well this week? Completed work, shipped output, positive signals.
-
-Reply format:
 ```
-*Week {{WEEK_LABEL}} — Section 1 of 6: Highlights*
+*Phase 3 — WIG [N] Commitment*
 
-Draft:
-1. [pre-filled from notes, or "Nothing found — add your wins"]
+Lead measure: [lead_measure_name] (weekly target: [weekly_target])
+Suggestions from Phase 2:
+1. [suggestion]
+2. [suggestion]
 
-ok / skip / add: … / update N: … / remove N
+What is the one or two most important things you can do next week to impact this lead measure?
+
+Commitments must:
+- Start with a verb
+- Name a specific artifact, action, or person
+- Be completable in one week
+
+Enter commitment(s) or "skip" to leave WIG [N] without a commitment.
 ```
 
----
-
-### Section 2 — Lowlights
-
-Blockers, stalled work, cancelled plans, anything that dragged.
-
-Reply format:
-```
-*Section 2 of 6: Lowlights*
-
-Draft:
-1. [pre-filled, or "None found — any blockers or stalls?"]
-
-ok / skip / add: … / update N: … / remove N
-```
-
----
-
-### Section 3 — Major Risks
-
-Patterns or cross-cutting issues that could affect the team or business.
-
-Reply format:
-```
-*Section 3 of 6: Major Risks*
-
-Draft:
-1. [pre-filled from recurring themes in notes, or "None detected — any risks to flag?"]
-
-ok / skip / add: … / update N: … / remove N
-```
-
----
-
-### Section 4 — Business Observations
-
-Insights tied to the north star KRs from `north-star.json`. Pre-fill from current-quarter KR data:
-- For each objective, show: KR description, current vs. target, score, verdict, and whether this week's WIG activity moved the needle.
-- Flag any KR with `verdict: "at_risk"` or `"losing"` as a risk bullet.
-- If `NO_NORTHSTAR`: fall back to the three known metrics (FFB volume, fertilizer sales, active farmers) and ask the user to provide numbers.
-
-Reply format:
-```
-*Section 4 of 6: Business Observations*
-
-Draft:
-1. [Objective name] — [KR description]: [current] / [target] [unit] ([score × 100]%) [verdict emoji]
-   WIGs this week: [weekly_done]/[weekly_target] lead measures hit
-2. [next objective...]
-3. [or risk flag: ⚠️ KR X at_risk — gap is N units, N weeks to quarter end]
-
-ok / skip / add: … / update N: … / remove N
-```
-
----
-
-### Section 5 — Next Actions
-
-What needs to happen next week? Open tasks, follow-ups, continuations.
-
-Reply format:
-```
-*Section 5 of 6: Next Actions*
-
-Draft:
-1. [pre-filled from open items in notes]
-
-ok / skip / add: … / update N: … / remove N
-```
-
----
-
-### Section 6 — Requests
-
-Tasks delegated to or waiting on someone else.
-
-Reply format:
-```
-*Section 6 of 6: Requests*
-
-Draft:
-1. [pre-filled, or "None — anything waiting on others?"]
-
-ok / skip / add: … / update N: … / remove N
-```
-
----
-
-## Step 4: Write the summary
-
-Create the output directories if needed:
-
-```bash
-mkdir -p /workspace/group/weekly
-mkdir -p /workspace/group/4dx/sessions
-```
-
-Write `/workspace/group/weekly/${WEEK_LABEL}.md`:
-
-```markdown
-# Weekly Cadence — {{WEEK_LABEL}}
-
-> {{WEEK_RANGE}}
-
-## Highlights
-- …
-
-## Lowlights
-- …
-
-## Major Risks
-- …
-
-## Business Observations
-- …
-
-## Next Actions
-- …
-
-## Requests
-- …
-```
-
-Rules:
-- H2 per section, bullets only — no prose paragraphs.
-- No AI filler language ("It's worth noting…", "In summary…").
-- Skipped sections: single bullet `- (none this week)`.
-
-After writing the markdown, write the weekly session JSON and reset the scoreboard weekly counters:
+After collecting commitments for all WIGs, confirm with user, then save to `scoreboard.json`:
 
 ```python
 import json
 from datetime import date
 
-# Write sessions/YYYY-WNN.json
 with open('/workspace/group/4dx/scoreboard.json') as f:
     state = json.load(f)
-with open('/workspace/group/4dx/wig.json') as f:
-    config = json.load(f)
 
-# Build session record from current state
-session = {
+# Build next_week commitments from user input
+state['next_week'] = {
     'week': WEEK_LABEL,
-    'win_days': WIN_DAY_COUNT,       # count of '🏆 WIN' verdicts this week
-    'total_days': TOTAL_ACTIVE_DAYS, # days where M1+M7 were both completed
-    'lead_completions': {
-        'wig1': state['scoreboard']['wig1']['weekly_done'],
-        'wig2': state['scoreboard']['wig2']['weekly_done'],
-        'wig3': state['scoreboard']['wig3']['weekly_done'],
-        'wig4': state['scoreboard']['wig4']['weekly_done'],
-    },
-    'lag_snapshots': {
-        'wig1': state['scoreboard']['wig1']['lag_current'],
-        'wig2': state['scoreboard']['wig2']['lag_current'],
-        'wig3': state['scoreboard']['wig3']['lag_current'],
-        'wig4': state['scoreboard']['wig4']['lag_current'],
-    },
-    'carry_forward_resolved': [],    # items from prior carry_forward now cleared
-    'weekly_summary': 'One paragraph summary of the week.'
+    'commitments': [
+        # Example entry — build one per WIG commitment collected:
+        # {'wig': 1, 'lead_measure': '...', 'action': '...', 'due': '2026-03-22'}
+    ]
 }
-
-session_path = f'/workspace/group/4dx/sessions/{WEEK_LABEL}.json'
-with open(session_path, 'w') as f:
-    json.dump(session, f, indent=2)
-
-# Reset weekly_done for new week
-for wig_key in ['wig1', 'wig2', 'wig3', 'wig4']:
-    state['scoreboard'][wig_key]['weekly_done'] = 0
 
 state['updated'] = date.today().isoformat()
 with open('/workspace/group/4dx/scoreboard.json', 'w') as f:
     json.dump(state, f, indent=2)
 
-print(f'Session saved: {session_path}')
-print('Scoreboard weekly_done reset for new week')
-```
-
-> **Note:** Build the actual Python script with real win_day_count, total_active_days, and weekly_summary values from the session.
-
-If `north-star.json` was loaded, also update KR `current` values from the week's lag snapshots, recompute scores and verdicts, and generate `next_action`:
-
-```python
-import json, os
-from datetime import date
-
-VERDICT_MAP = [(0.7, 'winning'), (0.4, 'on_track'), (0.2, 'at_risk')]
-
-def compute_verdict(score):
-    for threshold, label in VERDICT_MAP:
-        if score >= threshold: return label
-    return 'losing'
-
-def suggest_next_action(kr, verdict):
-    weeks_left = max(1, (13 - date.today().isocalendar()[1] % 13))
-    gap = kr['progress']['target'] - kr['progress']['current']
-    if verdict == 'losing':
-        return f"Critical: {gap} {kr['progress']['unit']} gap with ~{weeks_left} weeks left — escalate and re-plan."
-    if verdict == 'at_risk':
-        return f"At risk: need {gap} {kr['progress']['unit']} more — increase WIG frequency."
-    if verdict == 'on_track':
-        return f"On track — maintain lead measure pace to close {gap} {kr['progress']['unit']} gap."
-    return f"Winning — protect WIG time, avoid Whirlwind drift."
-
-with open('/workspace/group/north-star.json') as f:
-    ns = json.load(f)
-
-month = date.today().month
-current_quarter = f"Q{(month - 1) // 3 + 1}"
-
-for obj in ns['objectives']:
-    for kr in obj['key_results']:
-        if kr['quarter'] != current_quarter:
-            continue
-        # Update current from lag_snapshots for linked WIGs where applicable
-        # kr['progress']['current'] = <new value confirmed during Section 4>
-        target = kr['progress']['target']
-        current = kr['progress']['current']
-        score = round(current / target, 3) if target else 0.0
-        kr['score'] = score
-        kr['verdict'] = compute_verdict(score)
-        kr['next_action'] = suggest_next_action(kr, kr['verdict'])
-
-tmp = '/workspace/group/north-star.json.tmp'
-with open(tmp, 'w') as f:
-    json.dump(ns, f, indent=2)
-os.rename(tmp, '/workspace/group/north-star.json')
-print('north-star.json updated with weekly KR review')
-```
-
-> **Note:** Build the actual script with real `current` values confirmed in Section 4. Only update KRs where the user provided a new lag measure value.
-
-After writing, confirm to the user:
-
-```
-Weekly summary saved: weekly/{{WEEK_LABEL}}.md
-4DX session saved: 4dx/sessions/{{WEEK_LABEL}}.json
-Scoreboard reset for new week.
-North Star KRs updated: north-star.json
+print('Commitments saved to scoreboard.json next_week field.')
 ```
 
 ---

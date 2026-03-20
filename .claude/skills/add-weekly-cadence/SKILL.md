@@ -1,11 +1,11 @@
 ---
 name: add-weekly-cadence
-description: Add weekly cadence skill to container agents. Guides the user through a structured weekly review — highlights, lowlights, risks, business observations, next actions, and requests — and saves a dated summary to the group workspace.
+description: Add weekly cadence skill to container agents. Guides the user through a structured 4DX weekly review — audit past WIG commitments, update the scoreboard, and commit to next week's lead measures. Saves a dated summary to the group workspace.
 ---
 
 # Add Weekly Cadence
 
-Installs the weekly cadence skill into the container agent, enabling it to walk through a structured weekly review and save `weekly/YYYY-WXX.md` to the group workspace.
+Installs the weekly cadence skill into the container agent, enabling it to walk through a structured 4DX 20-Minute Win review and save `weekly/YYYY-WXX.md` to the group workspace.
 
 ## Phase 1: Pre-flight
 
@@ -49,9 +49,9 @@ launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 systemctl --user restart nanoclaw
 ```
 
-2. Send a message to a registered group: `weekly cadence` or `do weekly review`
-3. The agent should start the guided walkthrough and reply with the first section prompt.
-4. After completing all 6 sections, confirm the file exists:
+2. Send a message to a registered group: `weekly cadence`, `weekly review`, or `cadence`
+3. The agent should start the guided walkthrough and reply with Phase 1 — Past Commitment Audit.
+4. After completing all 3 phases, confirm the file exists:
 
 ```bash
 ls groups/*/weekly/
