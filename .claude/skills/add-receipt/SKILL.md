@@ -19,7 +19,8 @@ Installs host-side TypeScript for receipt storage (SQLite + IPC) and a streamlin
 
 1. Apply the skill:
    ```bash
-   npx tsx scripts/apply-skill.ts add-receipt
+   git fetch upstream skill/add-receipt
+   git merge upstream/skill/add-receipt
    ```
 
 2. Build:

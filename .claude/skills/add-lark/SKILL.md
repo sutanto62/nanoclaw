@@ -27,18 +27,11 @@ If they have credentials, collect them now. If not, we'll create the app in Phas
 
 Run the skills engine to apply this skill's code package. The package files are in this directory alongside this SKILL.md.
 
-### Initialize skills system (if needed)
-
-If `.nanoclaw/` directory doesn't exist yet:
-
-```bash
-npx tsx scripts/apply-skill.ts --init
-```
-
 ### Apply the skill
 
 ```bash
-npx tsx scripts/apply-skill.ts .claude/skills/add-lark
+git fetch upstream skill/add-lark
+git merge upstream/skill/add-lark
 ```
 
 This deterministically:

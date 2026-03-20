@@ -25,7 +25,9 @@ Installs a **host-side digest runner** that pre-processes Lark and Gmail message
 ## Apply
 
 ```bash
-npx tsx scripts/apply-skill.ts .claude/skills/add-channel-digest && npm run build
+git fetch upstream skill/add-channel-digest
+git merge upstream/skill/add-channel-digest
+npm run build
 ```
 
 This:

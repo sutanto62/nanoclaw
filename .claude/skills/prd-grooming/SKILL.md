@@ -20,7 +20,8 @@ Skip if already installed.
 ## Phase 2: Apply
 
 ```bash
-npx tsx scripts/apply-skill.ts .claude/skills/prd-grooming
+git fetch upstream skill/prd-grooming
+git merge upstream/skill/prd-grooming
 ```
 
 Verify the skill was placed:

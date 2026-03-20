@@ -20,7 +20,8 @@ Skip if already installed.
 ## Phase 2: Apply
 
 ```bash
-npx tsx scripts/apply-skill.ts .claude/skills/backlog-collector
+git fetch upstream skill/backlog-collector
+git merge upstream/skill/backlog-collector
 ```
 
 Verify the skill was placed:

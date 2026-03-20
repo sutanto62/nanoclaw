@@ -20,7 +20,8 @@ Skip if already installed.
 ## Phase 2: Apply
 
 ```bash
-npx tsx scripts/apply-skill.ts .claude/skills/add-weekly-cadence
+git fetch upstream skill/add-weekly-cadence
+git merge upstream/skill/add-weekly-cadence
 ```
 
 Verify the skill was placed:

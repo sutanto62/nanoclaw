@@ -20,7 +20,8 @@ Skip if already installed.
 ## Phase 2: Apply
 
 ```bash
-npx tsx scripts/apply-skill.ts .claude/skills/4dx-daily-plan
+git fetch upstream skill/4dx-daily-plan
+git merge upstream/skill/4dx-daily-plan
 ```
 
 Verify the skill was placed:
