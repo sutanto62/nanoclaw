@@ -1,5 +1,5 @@
 /**
- * wig-scorer.ts — Semantic WIG relevance scoring via Claude API
+ * wig-scorer.ts — Semantic WIG relevance scoring via Claude CLI
  *
  * Problem this solves:
  *   The old keyword-based matcher (isWigRelated) caused false positives because
@@ -10,7 +10,7 @@
  * How it works:
  *   1. loadWigDefinitions() reads groups/{mainFolder}/4dx/wig.json and returns typed
  *      WIG objects (id, name, description, leads).
- *   2. scoreWigRelevance() sends a structured prompt to Claude API (haiku model) asking
+ *   2. scoreWigRelevance() sends a structured prompt to `claude -p` (haiku model) asking
  *      it to score the message 1–5 against each WIG definition.
  *   3. Only scores >= 3 are returned as matches and trigger @Brain [WIG-{id}] prepend.
  *
@@ -21,17 +21,16 @@
  *   4 = directly related
  *   5 = explicit WIG activity
  *
- * Claude API config (read from .env at call time):
- *   CLAUDE_CODE_OAUTH_TOKEN  — preferred API key (checked first)
- *   ANTHROPIC_API_KEY        — fallback API key
- *   CLAUDE_WIG_MODEL   — default: claude-haiku-4-5-20251001
+ * Config (read from .env at call time):
+ *   CLAUDE_WIG_MODEL — default: claude-haiku-4-5-20251001
  *
  * Fallback behaviour:
- *   Any failure (API error, timeout, malformed JSON) returns { matches: [] } so
+ *   Any failure (CLI error, timeout, malformed JSON) returns { matches: [] } so
  *   the message is silently dropped. Better to miss a WIG signal occasionally than
  *   to spam the agent with false positives.
  */
 
+import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -59,7 +58,7 @@ export interface WigScorerResult {
 }
 
 // Reads wig.json and returns typed WIG definitions. Returns [] on missing file
-// or parse error so callers can skip the API call without throwing.
+// or parse error so callers can skip the CLI call without throwing.
 export function loadWigDefinitions(mainFolder: string): WigDefinition[] {
   const wigPath = path.join(
     process.cwd(),
@@ -108,7 +107,38 @@ JSON only, no explanation:
 Scoring: 1=unrelated, 2=vague, 3=domain related, 4=directly related, 5=explicit WIG activity`;
 }
 
-// Calls Claude API to semantically score a message against WIG definitions.
+function spawnClaude(prompt: string, model: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(
+      'claude',
+      [
+        '-p',
+        prompt,
+        '--model',
+        model,
+        '--output-format',
+        'text',
+        '--allowedTools',
+        '',
+      ],
+      { stdio: ['pipe', 'pipe', 'pipe'] },
+    );
+    let out = '';
+    let err = '';
+    proc.stdout.on('data', (d: Buffer) => {
+      out += d.toString();
+    });
+    proc.stderr.on('data', (d: Buffer) => {
+      err += d.toString();
+    });
+    proc.on('close', (code: number) => {
+      if (code === 0) resolve(out.trim());
+      else reject(new Error(err.trim() || `claude exited with code ${code}`));
+    });
+  });
+}
+
+// Calls Claude CLI to semantically score a message against WIG definitions.
 // Returns only matches with score >= 3. Empty matches on any failure.
 export async function scoreWigRelevance(
   content: string,
@@ -116,58 +146,26 @@ export async function scoreWigRelevance(
 ): Promise<WigScorerResult> {
   const empty: WigScorerResult = { summary: '', matches: [] };
 
-  // Skip API call entirely if no WIGs are defined.
+  // Skip CLI call entirely if no WIGs are defined.
   if (wigs.length === 0) return empty;
 
-  const env = readEnvFile([
-    'CLAUDE_CODE_OAUTH_TOKEN',
-    'ANTHROPIC_API_KEY',
-    'CLAUDE_WIG_MODEL',
-  ]);
-  const apiKey = env.CLAUDE_CODE_OAUTH_TOKEN ?? env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    logger.warn(
-      'WIG scorer: CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY not set, skipping',
-    );
-    return empty;
-  }
+  const env = readEnvFile(['CLAUDE_WIG_MODEL']);
   const model = env.CLAUDE_WIG_MODEL ?? 'claude-haiku-4-5-20251001';
   const prompt = buildPrompt(content, wigs);
 
   let raw: string;
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: 256,
-        messages: [{ role: 'user', content: prompt }],
-      }),
-      signal: AbortSignal.timeout(30000),
-    });
-
-    if (!res.ok) {
-      logger.warn(
-        { status: res.status, model },
-        'WIG scorer: Claude API HTTP error',
-      );
-      return empty;
-    }
-
-    const json = (await res.json()) as {
-      content?: { type: string; text: string }[];
-    };
-    raw = json.content?.find((c) => c.type === 'text')?.text ?? '';
+    raw = await Promise.race([
+      spawnClaude(prompt, model),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('timeout')), 30000),
+      ),
+    ]);
   } catch (err) {
-    const isTimeout = err instanceof Error && err.name === 'TimeoutError';
+    const isTimeout = err instanceof Error && err.message === 'timeout';
     logger.warn(
       { model, timeout: isTimeout },
-      'WIG scorer: Claude API request failed or timed out, dropping message',
+      'WIG scorer: CLI request failed or timed out',
     );
     return empty;
   }

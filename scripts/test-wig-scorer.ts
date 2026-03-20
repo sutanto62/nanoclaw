@@ -1,5 +1,5 @@
 /**
- * Quick smoke test for the Claude API-based WIG scorer.
+ * Quick smoke test for the Claude CLI-based WIG scorer.
  * Run: npx tsx scripts/test-wig-scorer.ts
  */
 
