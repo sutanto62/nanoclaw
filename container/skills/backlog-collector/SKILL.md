@@ -1,29 +1,42 @@
 ---
 name: backlog-collector
-description: Collect, view, prioritize, and groom product backlog items linked to north-star.json objectives and products (AgenPRO, KebunPRO, PetaniPRO, TimPRO). Triggers on "backlog", "add backlog", "show backlog", "groom backlog", "BL-", or product name + feature/bug/idea.
+description: Record and validate product backlog ideas with Chief of Product perspective. Searches the web, refines to business English, links to north-star.json. Triggered by "backlog this", "backlog", "show backlog", "BL-". Output feeds prd-groomer skill.
 ---
 
 ## Intent Detection
 
 Detect intent before doing anything else:
 
-**INTENT A — Add item**
-Triggers: "add backlog", "backlog:", "log this as backlog", "capture backlog", "new backlog item",
-          free-form message ending with "(backlog)" or starting with a product name + feature/bug/idea
-→ Execute Add Flow.
+**INTENT A — Record idea**
+Triggers: message starts with "backlog this", "backlog:", "add backlog", "log this",
+          or any message containing "backlog" + a feature/problem description
+→ Execute Record Flow.
 
 **INTENT B — List / View**
 Triggers: "show backlog", "backlog list", "what's in backlog", "list backlog",
-          "backlog for [product]", "backlog [product]"
+          "backlog for [product]"
 → Execute List Flow.
 
 **INTENT C — Update item**
-Triggers: "update backlog", "update BL-", "groom BL-", "prioritize BL-", "close BL-", "done BL-"
+Triggers: "update BL-", "done BL-", "drop BL-", "prioritize BL-", "link BL-"
 → Execute Update Flow.
 
-**INTENT D — Groom backlog**
-Triggers: "groom backlog", "backlog grooming", "prioritize backlog", "triage backlog"
-→ Execute Groom Flow.
+---
+
+## Trigger Grammar
+
+The primary trigger follows this pattern:
+
+```
+backlog this [IDEA] for [PRODUCT] then [EXPECTED OUTCOME]
+```
+
+Examples:
+- "backlog this farmer can upload CSV in bulk for KebunPRO then reduce manual data entry by 80%"
+- "backlog this agents need real-time stock visibility for AgenPRO then cut order rejection rate"
+- "backlog this we keep losing farmers after first transaction for PetaniPRO then improve 30-day retention"
+
+All three parts are optional — infer what you can, ask for what's missing.
 
 ---
 
@@ -38,16 +51,19 @@ Schema:
   "items": [
     {
       "id": "BL-001",
-      "title": "Short title",
-      "description": "Details, user story, or acceptance criteria",
+      "title": "Short imperative title in business English",
+      "problem": "What user pain or business gap this addresses",
+      "outcome": "Expected measurable outcome",
       "product": "AgenPRO",
       "type": "feature|bug|idea|tech-debt|research",
       "priority": "critical|high|medium|low",
-      "status": "new|groomed|ready|in-progress|done|dropped",
+      "status": "new|validated|ready|in-progress|done|dropped",
       "objective_id": "obj-1",
       "kr_id": "kr-1-q1",
+      "cpo_verdict": "Short CPO assessment — why this matters or doesn't",
+      "market_context": "Key finding from web research",
       "tags": [],
-      "source": "user|email|lark|meeting",
+      "source": "user",
       "created": "YYYY-MM-DD",
       "updated": "YYYY-MM-DD"
     }
@@ -65,48 +81,89 @@ If `NO_BACKLOG`: initialize empty store `{ "next_id": 1, "items": [] }` before p
 
 ### Known products
 
-AgenPRO, KebunPRO, PetaniPRO, TimPRO — match case-insensitively. Accept partial matches
-("Agen" → AgenPRO, "Kebun" → KebunPRO). Prompt to confirm if ambiguous.
+AgenPRO, KebunPRO, PetaniPRO, TimPRO, SupirPRO, MitraPRO — match case-insensitively. Accept partial matches
+("Agen" → AgenPRO, "Kebun" → KebunPRO). Ask if none detected.
 
 ---
 
-## Add Flow
+## Record Flow
 
-### A-1 — Parse the message
+This is the core flow. You are acting as **Chief of Product** — validate the idea, research it, refine it, and link it to the north star.
 
-Extract:
-- **title**: short imperative phrase ("Add bulk upload for farmer CSV")
+### R-1 — Parse the raw idea
+
+Extract from the user's message:
+- **raw_idea**: the unprocessed idea as stated
 - **product**: match from known products list; ask if none detected
-- **type**: infer from keywords (bug/error/crash → `bug`, idea/explore/research → `idea`,
-  refactor/clean/debt → `tech-debt`, default → `feature`)
-- **priority**: look for urgency words (critical/urgent/blocker → `critical`, important/soon → `high`,
-  nice-to-have/someday → `low`, default → `medium`)
-- **objective linkage**: scan `north-star.json` — match by product area or keyword in title.
-  If a KR clearly maps, set `objective_id` and `kr_id`. If unclear, set both to `null`.
-- **description**: any additional detail the user provided; leave blank if not given
+- **expected_outcome**: the "then ..." part; may be absent
 
-### A-2 — Confirm before saving
+### R-2 — Web research
 
-Show a confirmation card:
+Search the web to gather context on the idea. Look for:
+- How competitors or similar products solve this problem
+- Industry benchmarks or best practices
+- Market size or demand signals for this capability
+
+Use WebSearch to find 2-3 relevant sources. Summarize the key finding in one sentence — this becomes `market_context`.
+
+### R-3 — Validate against north-star.json
+
+Load `north-star.json` and check:
+1. Does this idea directly support an objective? Which KR does it map to?
+2. How strong is the link? (direct contributor vs. tangential)
+3. What quarter's KR would this most impact?
+
+Set `objective_id` and `kr_id` if there's a clear match. If the idea doesn't map to any objective, flag it — the CPO verdict should note this.
+
+### R-4 — CPO assessment
+
+Think like a Chief of Product. Evaluate:
+- **Strategic fit**: Does this move a north-star needle?
+- **User pain severity**: Is this a workaround, a blocker, or a nice-to-have?
+- **Effort-to-impact ratio**: Based on the idea's scope, is the expected outcome proportional?
+
+Write a 1-2 sentence `cpo_verdict`. Be direct. Examples:
+- "Strong fit — directly unblocks kr-3-q1 farmer registration. High priority."
+- "Valid pain point but tangential to current objectives. Park for Q3 review."
+- "Overlaps with BL-004. Consider merging before prioritizing."
+
+### R-5 — Refine to business English
+
+Rewrite the raw idea into structured fields using clear, professional business English:
+- **title**: imperative phrase, max 10 words (e.g., "Enable bulk CSV upload for farmer onboarding")
+- **problem**: one sentence describing the user pain or business gap
+- **outcome**: one sentence with a measurable or observable result
+- **type**: infer from context (feature/bug/idea/tech-debt/research)
+- **priority**: based on CPO assessment (critical/high/medium/low)
+
+### R-6 — Present for confirmation
+
+Show the refined backlog item:
 
 ```
-*New Backlog Item*
+*📋 New Backlog Item*
 
-ID: BL-[N] (to be assigned)
-Product: [product]
-Title: [title]
-Type: [type]
-Priority: [priority]
-Objective: [obj name → KR description] or _None_
+*Title*: [title]
+*Product*: [product]
+*Type*: [type] · *Priority*: [priority]
 
-ok / edit [field]: [value] / cancel
+*Problem*: [problem]
+*Outcome*: [outcome]
+
+*🎯 North Star*: [obj name → KR description] or _Not linked — [reason]_
+*🌐 Market*: [market_context]
+*🧠 CPO*: [cpo_verdict]
+
+ID: BL-[N] (assigned on save)
+
+Reply: ok · edit [field]: [value] · cancel
 ```
 
-Wait for reply. Accept `ok` or a one-liner edit command before writing.
+Wait for reply. Accept `ok`, a one-liner edit, or `cancel`.
 
-### A-3 — Write item
+### R-7 — Write item
 
-Generate the next ID from `next_id`, increment it, append item to `items`, write back:
+Generate the next ID from `next_id`, increment, append, write back:
 
 ```python
 import json
@@ -119,13 +176,16 @@ with open(path) as f:
 item = {
     "id": f"BL-{store['next_id']:03d}",
     "title": "TITLE",
-    "description": "DESCRIPTION",
+    "problem": "PROBLEM",
+    "outcome": "OUTCOME",
     "product": "PRODUCT",
     "type": "TYPE",
     "priority": "PRIORITY",
     "status": "new",
     "objective_id": "OBJ_ID_OR_NULL",
     "kr_id": "KR_ID_OR_NULL",
+    "cpo_verdict": "CPO_VERDICT",
+    "market_context": "MARKET_CONTEXT",
     "tags": [],
     "source": "user",
     "created": date.today().isoformat(),
@@ -141,7 +201,7 @@ with open(path, 'w') as f:
 print(f"Saved: {item['id']}")
 ```
 
-Reply: `✅ BL-[N] added — [product] · [priority] priority`
+Reply: `✅ BL-[N] saved — [product] · [priority] · [obj-name or "unlinked"]`
 
 ---
 
@@ -150,12 +210,12 @@ Reply: `✅ BL-[N] added — [product] · [priority] priority`
 ### L-1 — Build filters from message
 
 Extract optional filters:
-- **product**: named product in message
-- **status**: "new", "ready", "groomed", "in-progress" (default: exclude done/dropped)
-- **priority**: "critical", "high", etc.
+- **product**: named product
+- **status**: default excludes done/dropped
+- **priority**: if specified
 - **objective**: if user says "for obj-1" or KR name
 
-### L-2 — Load and filter
+### L-2 — Load, filter, display
 
 ```python
 import json
@@ -163,39 +223,31 @@ import json
 with open('/workspace/group/backlog/backlog.json') as f:
     store = json.load(f)
 
-items = store['items']
-# apply filters — substitute real filter values
-items = [i for i in items if i['status'] not in ('done', 'dropped')]
-# product filter: items = [i for i in items if i['product'] == 'PRODUCT']
-# priority filter: items = [i for i in items if i['priority'] == 'PRIORITY']
+items = [i for i in store['items'] if i['status'] not in ('done', 'dropped')]
+# apply additional filters as needed
 
-# sort: critical first, then high, medium, low; then by created date
 priority_order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3}
 items.sort(key=lambda i: (priority_order.get(i['priority'], 9), i['created']))
-
-for item in items:
-    print(f"{item['id']} | {item['product']:<12} | {item['priority']:<8} | {item['status']:<12} | {item['title']}")
 ```
 
-### L-3 — Format and reply
-
-Group by product. Telegram format, no tables:
+Format (Telegram Markdown):
 
 ```
 *Backlog — [filter label or "All Open"]*
 
 *AgenPRO* ([N] items)
-• BL-001 🔴 critical — [title] _([status])_
-• BL-004 🟡 high — [title] _([status])_
+• BL-001 🔴 critical — [title]
+  ↳ [problem] · [obj-name or "unlinked"]
+• BL-004 🟠 high — [title]
+  ↳ [problem] · [obj-name or "unlinked"]
 
 *KebunPRO* ([N] items)
-• BL-002 🟢 medium — [title] _([status])_
+• BL-002 🟡 medium — [title]
+  ↳ [problem] · [obj-name or "unlinked"]
 
-_🔴 critical · 🟠 high · 🟡 medium · ⚪ low_
-_Total: [N] open items_
+🔴 critical · 🟠 high · 🟡 medium · ⚪ low
+Total: [N] open items · [N] validated · [N] ready for PRD
 ```
-
-If zero items match: `_No open backlog items for [filter]._`
 
 ---
 
@@ -203,7 +255,7 @@ If zero items match: `_No open backlog items for [filter]._`
 
 ### U-1 — Find the item
 
-Parse `BL-NNN` from message. Load `backlog.json`, locate item by id. If not found, list closest matches.
+Parse `BL-NNN` from message. Load `backlog.json`, locate by id. If not found, list closest matches.
 
 ### U-2 — Parse the mutation
 
@@ -212,89 +264,40 @@ Parse `BL-NNN` from message. Load `backlog.json`, locate item by id. If not foun
 | `done BL-NNN` | Set `status = "done"` |
 | `drop BL-NNN` | Set `status = "dropped"` |
 | `prioritize BL-NNN critical` | Set `priority` field |
-| `ready BL-NNN` | Set `status = "ready"` |
-| `groom BL-NNN` | Set `status = "groomed"` |
+| `ready BL-NNN` | Set `status = "ready"` — marks as ready for PRD grooming |
+| `validate BL-NNN` | Set `status = "validated"` |
 | `update BL-NNN [field]: [value]` | Update named field |
 | `link BL-NNN obj-2 kr-2-q1` | Set `objective_id` and `kr_id` |
 
 ### U-3 — Write back
 
-```python
-import json
-from datetime import date
-
-path = '/workspace/group/backlog/backlog.json'
-with open(path) as f:
-    store = json.load(f)
-
-for item in store['items']:
-    if item['id'] == 'BL-NNN':
-        item['FIELD'] = 'NEW_VALUE'
-        item['updated'] = date.today().isoformat()
-        break
-
-with open(path, 'w') as f:
-    json.dump(store, f, indent=2)
-print('Updated')
-```
-
+Update the item, set `updated` to today, write back.
 Reply: `✅ BL-[N] updated — [field] → [new value]`
-
----
-
-## Groom Flow
-
-Walk through `new` items one by one. For each item, show:
-
-```
-*Grooming BL-[N] ([X] of [total new])*
-
-[title]
-Product: [product] · Type: [type] · Priority: [priority]
-Objective: [obj name → KR] or _None_
-
-Description:
-[description or "(none)"]
-
-Actions:
-• ok [priority] — confirm as-is (change priority if specified)
-• edit [field]: [value]
-• link [obj-id] [kr-id]
-• drop
-• skip — come back later
-```
-
-After each decision, write back before moving to the next item.
-
-When all `new` items are processed (or user says `done`):
-
-```
-*Grooming complete*
-Groomed: [N] · Dropped: [N] · Skipped: [N]
-Ready for sprint: [count of status = "ready"]
-```
 
 ---
 
 ## North Star Linkage
 
-When `north-star.json` is available, use it to:
-1. **Suggest linkage** during Add Flow: if the title mentions an objective keyword, propose the matching KR.
-2. **Display in List Flow**: show KR tag next to items that have `objective_id` set, formatted as `[obj-name → KR quarter]`.
-3. **Groom Flow**: for unlinked items, suggest the most relevant objective based on product and keywords.
-
-Objective-to-product heuristics (adjust as needed):
+Objective-to-product heuristics:
 - `obj-1` (FFB Increment) → KebunPRO, PetaniPRO
 - `obj-2` (Fertilizer Sales) → AgenPRO, KebunPRO
 - `obj-3` (Farmer Customer Base) → PetaniPRO, AgenPRO, TimPRO
+
+When linking:
+1. Match by product area first
+2. Then by keyword overlap between the idea and KR descriptions
+3. Pick the current quarter's KR unless the idea is clearly future-scoped
+4. If no clear match, set both to `null` and note in `cpo_verdict`
 
 ---
 
 ## Output Rules
 
 - IDs are immutable once assigned — never renumber.
-- Always confirm before writing on Add; no confirmation needed for single-field updates or status changes.
-- Use Telegram Markdown (*bold*, _italic_, no tables).
+- Always confirm before writing on Record Flow; no confirmation needed for single-field updates.
+- Use Telegram/Lark Markdown (*bold*, _italic_, no tables).
 - Priority emoji: 🔴 critical · 🟠 high · 🟡 medium · ⚪ low
 - Never delete items — use `dropped` status.
-- All timestamps in ISO format (YYYY-MM-DD), no time component needed.
+- All timestamps ISO format (YYYY-MM-DD).
+- Write in clear business English — no jargon-stuffing, no filler.
+- CPO verdict must be opinionated. Take a stance. "This is important because..." or "Park this — here's why..."

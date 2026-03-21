@@ -224,8 +224,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           ? result.result
           : JSON.stringify(result.result);
       // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-      const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+      let text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
+
+      // Detect auth failures and replace with a friendlier message
+      if (
+        /Failed to authenticate|Invalid bearer token|authentication_error/i.test(
+          text,
+        )
+      ) {
+        logger.error(
+          { group: group.name, detail: text },
+          'Auth failure sent to user — token likely expired',
+        );
+        text =
+          'Kitchen is locked 🔐 -- take a sip of ☕️. Wait until The Cook get new key! ';
+      }
+
       if (text) {
         await channel.sendMessage(chatJid, text);
         outputSentToUser = true;
