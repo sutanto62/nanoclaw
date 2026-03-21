@@ -1,0 +1,9 @@
+skill: backlog-collector
+version: 1.0.0
+description: "Product backlog idea recorder with CPO validation, web research, business English refinement, and north-star.json linkage. Feeds prd-groomer skill."
+core_version: 1.2.1
+adds:
+  - container/skills/backlog-collector/SKILL.md
+modifies: []
+conflicts: []
+depends: []

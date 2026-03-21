@@ -1,11 +1,11 @@
 ---
 name: backlog-collector
-description: Install the backlog collector skill into container agents. Collects, views, prioritizes, and grooms product backlog items (AgenPRO, KebunPRO, PetaniPRO, TimPRO) linked to north-star.json. Triggered by "backlog", "add backlog", "show backlog", "groom backlog", or "BL-".
+description: Install the backlog collector skill into container agents. Records and validates product backlog ideas with CPO perspective — web research, business English refinement, north-star.json linkage. Triggered by "backlog this", "backlog", "show backlog", or "BL-". Output feeds prd-groomer skill.
 ---
 
 # Backlog Collector
 
-Installs the backlog collector skill into the container agent, enabling it to capture and manage product backlog items linked to north-star.json objectives, stored at `backlog/backlog.json` in the group workspace.
+Installs the backlog collector skill into the container agent, enabling it to record and validate product backlog ideas with a Chief of Product perspective — web research, business English refinement, and north-star.json linkage. Items stored at `backlog/backlog.json` in the group workspace, ready for the prd-groomer skill.
 
 ## Phase 1: Pre-flight
 
