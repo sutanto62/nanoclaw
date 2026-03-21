@@ -14,9 +14,12 @@ import {
   upsertWigSignal,
 } from '../wig-signals.js';
 import {
+  batchScoreWigRelevance,
+  isWigScorable,
   loadWigDefinitions,
-  scoreWigRelevance,
   WigDefinition,
+  WigScorerBatchItem,
+  WigScorerResult,
 } from '../wig-scorer.js';
 import {
   Channel,
@@ -263,10 +266,43 @@ export class LarkChannel implements Channel {
     );
   }
 
+  // Extracts the plain-text content from a raw Lark message item.
+  // Mirrors the parsing logic in processItem so pre-filtering uses the same text.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private getItemTextContent(item: any): string {
+    const msgType: string = item.msg_type || '';
+    if (msgType !== 'text') {
+      const safeType = msgType.replace(/[^\x20-\x7E]/g, '?');
+      return NON_TEXT_PLACEHOLDERS[msgType] ?? `[${safeType}]`;
+    }
+    try {
+      return (
+        (JSON.parse(item.body?.content || '{}') as { text?: string }).text || ''
+      );
+    } catch {
+      return item.body?.content || '';
+    }
+  }
+
+  // Returns true if the item's mentions include the bot (by open_id or name).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private itemHasBotMention(item: any): boolean {
+    const mentions: Array<{
+      id?: { user_id?: string; open_id?: string };
+      name?: string;
+    }> = item.mentions || [];
+    return this.botOpenId
+      ? mentions.some((m) => m.id?.open_id === this.botOpenId)
+      : mentions.some(
+          (m) =>
+            !m.id?.user_id &&
+            m.name?.toLowerCase() === ASSISTANT_NAME.toLowerCase(),
+        );
+  }
+
   // Fetches all new messages for a single chat since the last cursor position,
-  // paginating through all pages. Advances the cursor to the newest message
-  // timestamp after each run — even if no messages arrived — so the next poll
-  // window stays tight and doesn't re-process the same range.
+  // paginating through all pages. Batch-scores WIG relevance for all messages
+  // in one Claude call, then routes each message individually.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private async fetchGroupMessages(
     chatJid: string,
@@ -285,8 +321,10 @@ export class LarkChannel implements Channel {
 
     let newestMs = sinceMs;
     let pageToken: string | undefined;
-    let fetched = 0;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const allItems: any[] = [];
 
+    // Phase 1: collect all items across pages.
     do {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let res: any;
@@ -325,21 +363,48 @@ export class LarkChannel implements Channel {
       for (const item of items) {
         // Skip bot/app messages (our own sent responses).
         if (item.sender?.sender_type === 'app') continue;
-
         const createMs = parseInt(item.create_time || '0');
         if (createMs > newestMs) newestMs = createMs;
-
-        await this.processItem(item, chatId, chatJid, wigDefs, mainFolder);
-        fetched++;
+        allItems.push(item);
       }
     } while (pageToken);
 
-    if (fetched > 0) {
-      logger.info({ chatJid, fetched }, 'Lark messages fetched');
-    }
-
     // Always advance cursor to avoid re-fetching the same window.
     this.lastFetchMs.set(chatId, newestMs);
+
+    if (allItems.length === 0) return;
+
+    // Phase 2: pre-filter then batch-score WIG relevance for all items at once.
+    // Items where the bot was mentioned are routed unconditionally and skipped here.
+    const scorableItems: WigScorerBatchItem[] =
+      wigDefs.length > 0
+        ? allItems
+            .filter(
+              (item) =>
+                !this.itemHasBotMention(item) &&
+                isWigScorable(this.getItemTextContent(item)),
+            )
+            .map((item) => ({
+              key: item.message_id as string,
+              content: this.getItemTextContent(item),
+            }))
+        : [];
+
+    const wigResults: Map<string, WigScorerResult> =
+      scorableItems.length > 0
+        ? await batchScoreWigRelevance(scorableItems, wigDefs)
+        : new Map();
+
+    // Phase 3: route each item with its pre-computed WIG result.
+    for (const item of allItems) {
+      const wigResult = wigResults.get(item.message_id) ?? {
+        summary: '',
+        matches: [],
+      };
+      await this.processItem(item, chatId, chatJid, wigResult, mainFolder);
+    }
+
+    logger.info({ chatJid, fetched: allItems.length }, 'Lark messages fetched');
   }
 
   // Processes a single Lark message item. Decides whether to forward the
@@ -362,7 +427,7 @@ export class LarkChannel implements Channel {
     item: any,
     chatId: string,
     chatJid: string,
-    wigDefs: WigDefinition[],
+    wigResult: WigScorerResult,
     mainFolder: string,
   ): Promise<void> {
     const senderId: string = item.sender?.id || '';
@@ -416,15 +481,9 @@ export class LarkChannel implements Channel {
         content = `@${ASSISTANT_NAME} ${content}`;
       }
 
-      // Semantic WIG scoring: call Ollama to summarize the message and score
-      // its relevance against each WIG definition (1–5). Only scores >= 3 are
-      // returned as matches — this eliminates false positives from short keyword
-      // tokens like "lead" or "tech" that appear in everyday conversation.
+      // WIG relevance was pre-scored in batch before processItem was called.
       const rawContent = content;
-      const { matches: wigMatches } =
-        wigDefs.length > 0
-          ? await scoreWigRelevance(content, wigDefs)
-          : { matches: [] };
+      const { matches: wigMatches } = wigResult;
       const isWig = wigMatches.length > 0;
       const wigIds = wigMatches.map((m) => m.wigId);
 

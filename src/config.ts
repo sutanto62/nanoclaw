@@ -13,6 +13,8 @@ const envConfig = readEnvFile([
   'DIGEST_INTERVAL_MS',
   'DIGEST_LOOKBACK_HOURS',
   'CLAUDE_PLANNING_MODEL',
+  'CLAUDE_WIG_MODEL',
+  'CLAUDE_WIG_CONTEXT_THRESHOLD',
 ]);
 
 export const ASSISTANT_NAME =
@@ -100,3 +102,19 @@ export const TELEGRAM_BOT_POOL = (
   .split(',')
   .map((t) => t.trim())
   .filter(Boolean);
+
+// WIG scorer config
+export const CLAUDE_WIG_MODEL =
+  process.env.CLAUDE_WIG_MODEL ||
+  envConfig.CLAUDE_WIG_MODEL ||
+  'claude-haiku-4-5-20251001';
+// Context window size (tokens) for the WIG scorer model.
+// Haiku context window is 200k. Adjust if model changes.
+export const CLAUDE_WIG_CONTEXT_WINDOW = 200000;
+// Fraction (0–100) of context window at which the scorer session is cleared.
+export const CLAUDE_WIG_CONTEXT_THRESHOLD = parseInt(
+  process.env.CLAUDE_WIG_CONTEXT_THRESHOLD ||
+    envConfig.CLAUDE_WIG_CONTEXT_THRESHOLD ||
+    '50',
+  10,
+);

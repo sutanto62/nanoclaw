@@ -10,9 +10,12 @@ import { registerChannel, ChannelOpts } from './registry.js';
 import { DIGEST_INTERVAL_MS, DIGEST_LOOKBACK_HOURS } from '../config.js';
 import { hasOpenSignalForKey, upsertWigSignal } from '../wig-signals.js';
 import {
+  batchScoreWigRelevance,
+  isWigScorable,
   loadWigDefinitions,
-  scoreWigRelevance,
   WigDefinition,
+  WigScorerBatchItem,
+  WigScorerResult,
 } from '../wig-scorer.js';
 import {
   Channel,
@@ -32,6 +35,19 @@ interface ThreadMeta {
   senderName: string;
   subject: string;
   messageId: string; // RFC 2822 Message-ID for In-Reply-To
+}
+
+// Parsed email metadata returned by fetchEmailMetadata, consumed by routeEmail.
+interface EmailMeta {
+  messageId: string;
+  threadId: string;
+  senderName: string;
+  senderEmail: string;
+  subject: string;
+  snippet: string;
+  timestamp: string;
+  // Subject + snippet, used for WIG batch scoring.
+  combinedText: string;
 }
 
 const URGENT_KEYWORDS = [
@@ -279,27 +295,53 @@ export class GmailChannel implements Channel {
       });
 
       const messages = res.data.messages || [];
-      let metaChanged = false;
 
+      // Phase 1: fetch metadata for all emails (sequential to avoid rate-limits).
+      const allMeta: EmailMeta[] = [];
       for (const stub of messages) {
         if (!stub.id) continue;
         try {
-          const changed = await this.processEmailMetadata(
-            stub.id,
-            vipNames,
-            wigDefs,
-            main,
-          );
-          if (changed) metaChanged = true;
+          const meta = await this.fetchEmailMetadata(stub.id);
+          if (meta) allMeta.push(meta);
         } catch (err) {
           logger.warn(
             { messageId: stub.id, err },
-            'Failed to process email, skipping',
+            'Failed to fetch email metadata, skipping',
           );
         }
       }
 
-      if (metaChanged) this.saveThreadMeta();
+      if (allMeta.length > 0) this.saveThreadMeta();
+
+      // Phase 2: pre-filter then batch-score WIG relevance in one Claude call.
+      const scorableItems: WigScorerBatchItem[] =
+        wigDefs.length > 0
+          ? allMeta
+              .filter((m) => isWigScorable(m.combinedText))
+              .map((m) => ({ key: m.messageId, content: m.combinedText }))
+          : [];
+
+      const wigResults: Map<string, WigScorerResult> =
+        scorableItems.length > 0
+          ? await batchScoreWigRelevance(scorableItems, wigDefs)
+          : new Map();
+
+      // Phase 3: route each email with its pre-computed WIG result.
+      for (const meta of allMeta) {
+        const wigResult = wigResults.get(meta.messageId) ?? {
+          summary: '',
+          matches: [],
+        };
+        try {
+          await this.routeEmail(meta, wigResult, vipNames, main);
+        } catch (err) {
+          logger.warn(
+            { messageId: meta.messageId, err },
+            'Failed to route email, skipping',
+          );
+        }
+      }
+
       this.consecutiveErrors = 0;
     } catch (err) {
       this.consecutiveErrors++;
@@ -311,18 +353,13 @@ export class GmailChannel implements Channel {
   }
 
   /**
-   * Fetch metadata only first (fast). Cache threadMeta for all emails.
-   * Fetch full body and deliver to Brain only for VIP or urgent emails.
-   * Mark all others as read silently — MCP handles them during briefing.
-   * Returns true if threadMeta was updated.
+   * Fetch metadata only (fast). Caches threadMeta and registers the chat.
+   * Returns null if the email should be skipped (e.g. sent by ourselves).
    */
-  private async processEmailMetadata(
+  private async fetchEmailMetadata(
     messageId: string,
-    vipNames: string[],
-    wigDefs: WigDefinition[],
-    main: { jid: string; group: RegisteredGroup } | null,
-  ): Promise<boolean> {
-    if (!this.gmail) return false;
+  ): Promise<EmailMeta | null> {
+    if (!this.gmail) return null;
 
     const msg = await this.gmail.users.messages.get({
       userId: 'me',
@@ -349,7 +386,7 @@ export class GmailChannel implements Channel {
     const senderEmail = senderMatch ? senderMatch[2] : from;
     const snippet = msg.data.snippet || '';
 
-    if (senderEmail === this.userEmail) return false;
+    if (senderEmail === this.userEmail) return null;
 
     // Always cache threadMeta — needed for replies regardless of urgency
     this.threadMeta.set(threadId, {
@@ -367,14 +404,39 @@ export class GmailChannel implements Channel {
       false,
     );
 
-    // Semantic WIG scoring against email subject + snippet. The full body is
-    // not fetched at this stage (metadata-only pass), so subject+snippet is
-    // the best available signal for relevance scoring.
-    const combinedText = `${subject} ${snippet}`;
-    const { matches: wigMatches } =
-      wigDefs.length > 0
-        ? await scoreWigRelevance(combinedText, wigDefs)
-        : { matches: [] };
+    return {
+      messageId,
+      threadId,
+      senderName,
+      senderEmail,
+      subject,
+      snippet,
+      timestamp,
+      combinedText: `${subject} ${snippet}`,
+    };
+  }
+
+  /**
+   * Route a fetched email using a pre-computed WIG result.
+   * Delivers to Brain if urgent (VIP, urgent subject, or WIG-related).
+   * Marks read silently otherwise — MCP handles non-urgent during briefing.
+   */
+  private async routeEmail(
+    meta: EmailMeta,
+    wigResult: WigScorerResult,
+    vipNames: string[],
+    main: { jid: string; group: RegisteredGroup } | null,
+  ): Promise<void> {
+    const {
+      messageId,
+      threadId,
+      senderName,
+      senderEmail,
+      subject,
+      snippet,
+      timestamp,
+    } = meta;
+    const wigMatches = wigResult.matches;
     const wigRelated = wigMatches.length > 0;
     const wigIds = wigMatches.map((m) => m.wigId);
 
@@ -425,8 +487,6 @@ export class GmailChannel implements Channel {
         'Non-urgent email cached and marked read',
       );
     }
-
-    return true;
   }
 
   private async deliverEmailToBrain(
